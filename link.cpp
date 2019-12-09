@@ -3,10 +3,25 @@
 #include <vector>
 #include <unordered_map>
 #include <string>
+#include <string_view>
+#include <system_error>
+
+#include <cstdint>
+#include <cassert>
+#include <cstdio>
+
+#include <err.h>
+
+#include <afp/finder_info.h>
+
 
 #include "omf.h"
+#include "rel.h"
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
+
+/* since span isn't standard yet */
+typedef std::basic_string_view<uint8_t> byte_view;
 
 
 struct symbol {
@@ -27,10 +42,14 @@ struct pending_reloc : public omf::reloc {
 std::unordered_map<std::string, unsigned> symbol_map;
 std::vector<symbol> symbol_table;
 
-reference *find_symbol(const std::string &name) {
+
+std::vector<omf::segment> segments;
+
+/* nb - pointer may be invalidated by next call */
+symbol *find_symbol(const std::string &name) {
 	
 	auto iter = symbol_map.find(name);
-	if (iter != symbol_map.end()) return &symbol_table[*iter - 1];
+	if (iter != symbol_map.end()) return &symbol_table[iter->second - 1];
 
 	unsigned id = symbol_table.size() + 1;
 	symbol_map.emplace(name, id);
@@ -38,19 +57,22 @@ reference *find_symbol(const std::string &name) {
 	auto &rv = symbol_table.emplace_back();
 	rv.name = name;
 	rv.id = id;
-	return *rv;
+	return &rv;
 }
 
 
 
-uint32_t start = 0; /* starting point of current unit */
-std::vector<unsigned> remap;
+struct cookie {
+	std::string file;
+	std::vector<unsigned> remap;
+	uint32_t start = 0;
+	uint32_t length = 0;
+};
 
-
-process_labels(std::span &data) {
+void process_labels(byte_view &data, cookie &cookie) {
 
 	for(;;) {
-		assert(data.size())
+		assert(data.size());
 		unsigned flag = data[0];
 		if (flag == 0x00) return;
 
@@ -63,14 +85,14 @@ process_labels(std::span &data) {
 		uint32_t value = data[0] | (data[1] << 8) | (data[2] << 16);
 		data.remove_prefix(3);
 
-		reference *e = find_symbol(name);
+		symbol *e = find_symbol(name);
 		switch (flag & ~0x1f) {
 			case SYMBOL_EXTERNAL:
 				/* map the unit symbol # to a global symbol # */
 				value &= 0x7fff;
-				if (remap.size() < value + 1)
-					remap.resize(value + 1);
-				remap[value] = e->id;
+				if (cookie.remap.size() < value + 1)
+					cookie.remap.resize(value + 1);
+				cookie.remap[value] = e->id;
 				break;
 
 
@@ -80,26 +102,30 @@ process_labels(std::span &data) {
 
 			case SYMBOL_ENTRY:
 				if (e->defined) {
-					warnx("%s previously defined (%s)", e->name, e->file);
+					warnx("%s previously defined (%s)", e->name.c_str(), e->file.c_str());
 					break;
 				}
 				e->defined = true;
-				e->file = file;
+				e->file = cookie.file;
 				if (flag & SYMBOL_ABSOLUTE) {
 					e->absolute = true;
 					e->value = value;
 				} else {
 					e->absolute = false;
-					e->value = value - 0x8000 + start;
+					e->value = value - 0x8000 + cookie.start;
 				}
 				break;
 			default:
+				errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
+				break;
 		}
 	}
 }
 
 
-process_reloc(std::span &data) {
+void process_reloc(byte_view &data, cookie &cookie) {
+
+	auto &seg_data = segments.back().data;
 
 	for(;;) {
 		assert(data.size());
@@ -112,7 +138,7 @@ process_reloc(std::span &data) {
 		unsigned x = data[3];
 		data.remove_prefix(4);
 
-		offset += start;
+		offset += cookie.start;
 		bool external = false;
 		unsigned shift = 0;
 		uint32_t value = 0;
@@ -139,16 +165,29 @@ process_reloc(std::span &data) {
 					size = 1;
 					break;
 				default: /* bad */
+					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
+					break;
 			}
 		} else {
-			assert(flag  & ~(0x0f|0x10|0x20|0x80) == 0);
+			assert((flag  & ~(0x0f|0x10|0x20|0x80)) == 0);
 
 			unsigned size = 0;
 			switch(flag & (0x80 + 0x20)) {
-				case 0: size = 1;
-				case 0x20: size = 3;
-				case 0x80: size = 2;
+				case 0:
+					size = 1;
+					assert(offset + 0 < cookie.length);
+					break;
+				case 0x20:
+					size = 3;
+					assert(offset + 2 < cookie.length);
+					break;
+				case 0x80:
+					size = 2;
+					assert(offset + 1 < cookie.length);
+					break;
 				default: /* bad size */
+					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
+					break;
 			}
 			external = flag & 0x10;
 
@@ -160,7 +199,7 @@ process_reloc(std::span &data) {
 
 
 			if (size > 1) value -= 0x8000;
-			value += start;
+			value += cookie.start;
 
 		}
 
@@ -168,9 +207,9 @@ process_reloc(std::span &data) {
 
 		if (external) {
 			/* x = local symbol # */
-			reloc r;
-			assert(x < remap.size());
-			r.id = remap[x]; /* label reference is 0-based */
+			pending_reloc r;
+			assert(x < cookie.remap.size());
+			r.id = cookie.remap[x]; /* label reference is 0-based */
 			r.size = size;
 			r.offset = offset;
 			r.value = value;
@@ -181,7 +220,7 @@ process_reloc(std::span &data) {
 			uint32_t value = 0;
 			omf::reloc r;
 			r.size = size;
-			r.offset = start;
+			r.offset = cookie.start; /* ???? */
 			r.value = value;
 			r.shift = shift;
 
@@ -191,6 +230,7 @@ process_reloc(std::span &data) {
 	}
 }
 
+/*
 void add_libraries() {
 	auto iter = libs.begin();
 	auto end = libs.end();
@@ -201,29 +241,68 @@ void add_libraries() {
 
 	}
 }
+*/
 
 
+void process_unit(const std::string &path) {
 
-process_unit(span data) {
-
+	cookie cookie;
 	/* skip over relocs, do symbols first */
-	remap.clear();
 
-	span rr = data;
+
+	std::error_code ec;
+	mapped_file mf(path, mapped_file::readonly, ec);
+	if (ec) {
+		errx(1, "Unable to open %s: %s" path.c_str(), ec.message().c_str());
+	}
+
+
+	afp::finder_info fi;
+
+	fi.read(path, ec);
+
+	if (ec) {
+		errx(1, "Error reading filetype %s: %s", path.c_str(), ec.message().c_str());
+	}
+
+	if (fi.prodos_file_type() != 0xf8) {
+		errx(1, "Wrong file type: %s", path.c_str());
+	}
+
+	uint32_t offset = fi.prodos_aux_type();
+	if (offset+2 > mf.size()) {
+		errx(1, "Invalid aux type %s", path.c_str());
+	}
+
+
+	omf::segment &seg = segments.back();
+
+	seg.data.append(mf.data(), mf.data() + offset);
+
+	byte_view data(mf.data() + offset, mf.size() - offset);
+
+	cookie.start = seg.data.size();
+	cookie.length = offset;
+	cookie.file = path;
+
+	byte_view rr = data;
+	/* skip over the relocation records so we can process the labels first. */
+	/* this is so external references can use the global symbol id */
 	for(;;) {
+		assert(data.size() >= 6);
 		if (data[0] == 0) break;
 		data.remove_prefix(4);
 	}
 	data.remove_prefix(1);
-	process_labels(data);
-	assert(data.length() == 1);
+	process_labels(data, cookie);
+	assert(data.size() == 1);
 
 	/* now relocations */
-	process_reloc(rr);
+	process_reloc(rr, cookie);
 }
 
 
-finalize(void) {
+void finalize(void) {
 
 	for (auto &r in relocations) {
 		assert(r.id <= symbol_map.length());

@@ -573,6 +573,12 @@ operand:
 			break;
 
 
+		case CMD_LEN:
+			/* Puts "LABEL" in symbol dictionary a san ENTry whose value is equal to the number of bytes of the last linked file. */
+			break;
+		case CMD_POS:
+		
+
 
 		case CMD_ASM:
 		default:
