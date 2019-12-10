@@ -11,14 +11,20 @@
 #include <cstdio>
 
 #include <err.h>
+#include <sysexits.h>
+#include <unistd.h>
 
 #include <afp/finder_info.h>
 
+
+#include "mapped_file.h"
 
 #include "omf.h"
 #include "rel.h"
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
+int set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type, std::error_code &ec);
+void set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type);
 
 /* since span isn't standard yet */
 typedef std::basic_string_view<uint8_t> byte_view;
@@ -35,12 +41,15 @@ struct symbol {
 	bool defined = false;
 };
 
+
+std::unordered_map<std::string, unsigned> symbol_map;
+std::vector<symbol> symbol_table;
+
 struct pending_reloc : public omf::reloc {
 	unsigned id = 0;
 };
 
-std::unordered_map<std::string, unsigned> symbol_map;
-std::vector<symbol> symbol_table;
+std::vector<pending_reloc> relocations;
 
 
 std::vector<omf::segment> segments;
@@ -125,7 +134,7 @@ void process_labels(byte_view &data, cookie &cookie) {
 
 void process_reloc(byte_view &data, cookie &cookie) {
 
-	auto &seg_data = segments.back().data;
+	auto &seg = segments.back();
 
 	for(;;) {
 		assert(data.size());
@@ -192,9 +201,9 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			external = flag & 0x10;
 
 			switch(size) {
-				case 3: value |= seg_data[offset+2] << 16;
-				case 2: value |= seg_data[offset+1] << 8;
-				case 1: value |= seg_data[offset+0];
+				case 3: value |= seg.data[offset+2] << 16;
+				case 2: value |= seg.data[offset+1] << 8;
+				case 1: value |= seg.data[offset+0];
 			}
 
 
@@ -215,6 +224,7 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			r.value = value;
 			r.shift = shift;
 
+			symbol_table[r.id].count += 1;
 			relocations.emplace_back(r);
 		} else {
 			uint32_t value = 0;
@@ -253,7 +263,7 @@ void process_unit(const std::string &path) {
 	std::error_code ec;
 	mapped_file mf(path, mapped_file::readonly, ec);
 	if (ec) {
-		errx(1, "Unable to open %s: %s" path.c_str(), ec.message().c_str());
+		errx(1, "Unable to open %s: %s", path.c_str(), ec.message().c_str());
 	}
 
 
@@ -277,7 +287,7 @@ void process_unit(const std::string &path) {
 
 	omf::segment &seg = segments.back();
 
-	seg.data.append(mf.data(), mf.data() + offset);
+	seg.data.insert(seg.data.end(), mf.data(), mf.data() + offset);
 
 	byte_view data(mf.data() + offset, mf.size() - offset);
 
@@ -304,10 +314,12 @@ void process_unit(const std::string &path) {
 
 void finalize(void) {
 
-	for (auto &r in relocations) {
-		assert(r.id <= symbol_map.length());
-		const auto &label = symbol_map[rr.id];
+	/* this needs to be updated if supporting multiple segments */
+	auto &seg = segments.back();
 
+	for (auto &r : relocations) {
+		assert(r.id <= symbol_map.size());
+		const auto &label = symbol_table[r.id];
 		r.value = label.value;
 		seg.relocs.emplace_back(r);
 	}
@@ -336,5 +348,54 @@ void print_symbols(void) {
 
 	for (const auto &lab : symbol_table) {
 		fprintf(stdout, "%-20s: $%06x\n", lab.name.c_str(), lab.value);
+	}
+}
+
+
+void usage(int ex) {
+
+	fputs("merlin-link [-o outfile] infile...\n", stderr);
+	exit(ex);
+}
+
+int main(int argc, char **argv) {
+
+	int c;
+	std::string gs_out = "gs.out";
+
+	while ((c = getopt(argc, argv, "o:")) != -1) {
+		switch(c) {
+			case 'o':
+				gs_out = optarg;
+				break;
+			case ':':
+			case '?':
+			default:
+				usage(EX_USAGE);
+				break;
+		}
+	}
+
+	argv += optind;
+	argc -= optind;
+
+	if (!argc) usage(EX_USAGE);
+
+	segments.emplace_back();
+	for (int i = 0; i < argc; ++i) {
+		char *path = argv[i];
+		try {
+			process_unit(path);
+		} catch (std::exception &ex) {
+			errx(EX_DATAERR, "%s: %s", path, ex.what());
+		}
+	}
+
+	try {
+		save_omf(gs_out, segments, true, true);
+		set_file_type(gs_out, 0xb3, 0x0000);
+		exit(0);
+	} catch (std::exception &ex) {
+		errx(EX_OSERR, "%s: %s", gs_out.c_str(), ex.what());
 	}
 }

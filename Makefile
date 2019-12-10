@@ -15,7 +15,7 @@ clean:
 o:
 	mkdir $<
 
-rel-link: o/link.o o/mapped_file.o o/omf.o afp/libafp.a
+rel-link: o/link.o o/mapped_file.o o/omf.o o/set_file_type.o afp/libafp.a
 	$(LINK.o) $^ $(LDLIBS) -o $@
 
 o/mapped_file.o : mapped_file.cpp mapped_file.h unique_resource.h
