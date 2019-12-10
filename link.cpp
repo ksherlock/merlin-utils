@@ -74,6 +74,8 @@ symbol *find_symbol(const std::string &name) {
 struct cookie {
 	std::string file;
 	std::vector<unsigned> remap;
+	//std::vector<std::pair<unsigned, unsigned>> zero;
+
 	uint32_t start = 0;
 	uint32_t length = 0;
 };
@@ -162,25 +164,25 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			external = flag & 0x04;
 			switch(flag & ~0x04) {
 				case 0xd0:
-					shift = 16;
+					shift = -16;
 					size = 1;
 					break;
 				case 0xd1:
-					shift = 8;
+					shift = -8;
 					size = 2;
 					break;
 				case 0xd3:
-					shift = 8;
+					shift = -8;
 					size = 1;
 					break;
 				default: /* bad */
 					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
 					break;
 			}
+			data.remove_prefix(4);
 		} else {
 			assert((flag  & ~(0x0f|0x10|0x20|0x80)) == 0);
 
-			unsigned size = 0;
 			switch(flag & (0x80 + 0x20)) {
 				case 0:
 					size = 1;
@@ -230,13 +232,17 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			uint32_t value = 0;
 			omf::reloc r;
 			r.size = size;
-			r.offset = cookie.start; /* ???? */
+			r.offset = offset; /* ???? */
 			r.value = value;
 			r.shift = shift;
 
 			seg.relocs.emplace_back(r);
 		}
-
+		/* clear out the inline relocation data */
+		for(unsigned i = 0; i < size; ++i) {
+			seg.data[offset + i] = 0;
+		}
+		//cookie.zero.emplace_back(std::make_pair(offset, size));
 	}
 }
 
@@ -284,23 +290,24 @@ void process_unit(const std::string &path) {
 		errx(1, "Invalid aux type %s", path.c_str());
 	}
 
-
 	omf::segment &seg = segments.back();
-
-	seg.data.insert(seg.data.end(), mf.data(), mf.data() + offset);
-
-	byte_view data(mf.data() + offset, mf.size() - offset);
 
 	cookie.start = seg.data.size();
 	cookie.length = offset;
 	cookie.file = path;
 
+	seg.data.insert(seg.data.end(), mf.data(), mf.data() + offset);
+	byte_view data(mf.data() + offset, mf.size() - offset);
+
+
+
 	byte_view rr = data;
 	/* skip over the relocation records so we can process the labels first. */
 	/* this is so external references can use the global symbol id */
+	assert(data.size() >= 2);
 	for(;;) {
-		assert(data.size() >= 6);
 		if (data[0] == 0) break;
+		assert(data.size() >= 6);
 		data.remove_prefix(4);
 	}
 	data.remove_prefix(1);
