@@ -13,7 +13,7 @@ clean:
 
 
 o:
-	mkdir $<
+	mkdir o
 
 merlin-link: o/link.o o/mapped_file.o o/omf.o o/set_file_type.o afp/libafp.a
 	$(LINK.o) $^ $(LDLIBS) -o $@
