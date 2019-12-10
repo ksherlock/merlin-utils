@@ -6,7 +6,7 @@ matrix:
     - os: linux
       env: COMPILER_NAME=gcc CXX=g++ CC=gcc
     - os: linux
-      env: COMPILER_NAME=clang CXX=clang CC=clang
+      env: COMPILER_NAME=clang CXX=clang++ CC=clang
 
 script: make merlin-link
 
