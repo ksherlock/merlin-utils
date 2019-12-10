@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#incude <algorithm>
+#include <algorithm>
 
 #include <cstdint>
 #include <cassert>
