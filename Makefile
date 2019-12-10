@@ -5,17 +5,17 @@ CPPFLAGS += -I afp/include
 
 .PHONY: all clean
 
-all: rel-link
+all: merlin-link
 
 clean:
-	$(RM) -rf rel-link o
+	$(RM) -rf merlin-link o
 	$(MAKE) -C afp clean
 
 
 o:
 	mkdir $<
 
-rel-link: o/link.o o/mapped_file.o o/omf.o o/set_file_type.o afp/libafp.a
+merlin-link: o/link.o o/mapped_file.o o/omf.o o/set_file_type.o afp/libafp.a
 	$(LINK.o) $^ $(LDLIBS) -o $@
 
 o/mapped_file.o : mapped_file.cpp mapped_file.h unique_resource.h

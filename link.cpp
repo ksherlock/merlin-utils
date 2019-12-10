@@ -76,8 +76,8 @@ struct cookie {
 	std::vector<unsigned> remap;
 	//std::vector<std::pair<unsigned, unsigned>> zero;
 
-	uint32_t start = 0;
-	uint32_t length = 0;
+	uint32_t begin = 0;
+	uint32_t end = 0;
 };
 
 void process_labels(byte_view &data, cookie &cookie) {
@@ -123,7 +123,7 @@ void process_labels(byte_view &data, cookie &cookie) {
 					e->value = value;
 				} else {
 					e->absolute = false;
-					e->value = value - 0x8000 + cookie.start;
+					e->value = value - 0x8000 + cookie.begin;
 				}
 				break;
 			default:
@@ -149,7 +149,7 @@ void process_reloc(byte_view &data, cookie &cookie) {
 		unsigned x = data[3];
 		data.remove_prefix(4);
 
-		offset += cookie.start;
+		offset += cookie.begin;
 		bool external = false;
 		unsigned shift = 0;
 		uint32_t value = 0;
@@ -183,18 +183,19 @@ void process_reloc(byte_view &data, cookie &cookie) {
 		} else {
 			assert((flag  & ~(0x0f|0x10|0x20|0x80)) == 0);
 
+			// offset already adjusted by start so below comparisons are wrong.
 			switch(flag & (0x80 + 0x20)) {
 				case 0:
 					size = 1;
-					assert(offset + 0 < cookie.length);
+					assert(offset + 0 < cookie.end);
 					break;
 				case 0x20:
 					size = 3;
-					assert(offset + 2 < cookie.length);
+					assert(offset + 2 < cookie.end);
 					break;
 				case 0x80:
 					size = 2;
-					assert(offset + 1 < cookie.length);
+					assert(offset + 1 < cookie.end);
 					break;
 				default: /* bad size */
 					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
@@ -210,7 +211,7 @@ void process_reloc(byte_view &data, cookie &cookie) {
 
 
 			if (size > 1) value -= 0x8000;
-			value += cookie.start;
+			value += cookie.begin;
 
 		}
 
@@ -229,10 +230,9 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			symbol_table[r.id].count += 1;
 			relocations.emplace_back(r);
 		} else {
-			uint32_t value = 0;
 			omf::reloc r;
 			r.size = size;
-			r.offset = offset; /* ???? */
+			r.offset = offset;
 			r.value = value;
 			r.shift = shift;
 
@@ -292,8 +292,8 @@ void process_unit(const std::string &path) {
 
 	omf::segment &seg = segments.back();
 
-	cookie.start = seg.data.size();
-	cookie.length = offset;
+	cookie.begin = seg.data.size();
+	cookie.end = cookie.begin + offset;
 	cookie.file = path;
 
 	seg.data.insert(seg.data.end(), mf.data(), mf.data() + offset);
@@ -369,12 +369,17 @@ int main(int argc, char **argv) {
 
 	int c;
 	std::string gs_out = "gs.out";
+	bool express = true;
+	bool compress = true;
 
-	while ((c = getopt(argc, argv, "o:")) != -1) {
+
+	while ((c = getopt(argc, argv, "o:XC")) != -1) {
 		switch(c) {
 			case 'o':
 				gs_out = optarg;
 				break;
+			case 'X': express = false; break;
+			case 'C': compress = false; break;
 			case ':':
 			case '?':
 			default:
@@ -398,8 +403,10 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	print_symbols();
+
 	try {
-		save_omf(gs_out, segments, true, true);
+		save_omf(gs_out, segments, compress, express);
 		set_file_type(gs_out, 0xb3, 0x0000);
 		exit(0);
 	} catch (std::exception &ex) {
