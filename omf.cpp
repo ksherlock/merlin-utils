@@ -86,7 +86,7 @@ void push(std::vector<uint8_t> &v, uint32_t x) {
 void push(std::vector<uint8_t> &v, const std::string &s) {
 	uint8_t count = std::min((int)s.size(), 255);
 	push(v, count);
-	v.insert(v.end(), s.begin(), s.end());
+	v.insert(v.end(), s.begin(), s.begin() + count);
 }
 
 class super_helper {
