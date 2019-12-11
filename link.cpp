@@ -14,8 +14,9 @@
 #include <charconv>
 #endif
 
-#include <cstdint>
 #include <cassert>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
@@ -415,7 +416,7 @@ bool parse_number(const char *begin, const char *end, uint32_t &value, int base 
 	auto xerrno = errno;
 	errno = 0;
 	char *ptr = nullptr;
-	value = stroul(begin, &ptr, base);
+	value = std::strtoul(begin, &ptr, base);
 	std::swap(errno, xerrno);
 	if (xerrno || ptr != end) {
 		return false;
