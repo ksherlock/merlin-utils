@@ -10,12 +10,14 @@
 
 /* old version of stdlib have this stuff in utility */
 #if __has_include(<charconv>)
+#define HAVE_CHARCONV
 #include <charconv>
 #endif
 
 #include <cstdint>
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 
 #include <err.h>
 #include <sysexits.h>
@@ -360,29 +362,39 @@ void finalize(void) {
 	relocations.clear();
 }
 
+static void print_symbols2(void) {
+
+	for (const auto &e : symbol_table) {
+		char q = ' ';
+		if (!e.count) q = '?';
+		if (!e.defined) q = '!';
+		fprintf(stdout, "%c %-20s=$%06x\n", q, e.name.c_str(), e.value);
+	}	
+}
+
 void print_symbols(void) { 
 
 	if (symbol_table.empty()) return;
 
 	/* alpha */
+	fputs("\nSymbol table, alphabetical order:\n", stdout);
 	std::sort(symbol_table.begin(), symbol_table.end(),
 		[](const symbol &a, const symbol &b){
 			return a.name < b.name; 
 		});
 
-	for (const auto &lab : symbol_table) {
-		fprintf(stdout, "%-20s: $%06x\n", lab.name.c_str(), lab.value);
-	}
-	fputs("\n", stdout);
+	print_symbols2();
+
+	fputs("\nSymbol table, numerical order:\n", stdout);
+
 	/* numeric */
 	std::sort(symbol_table.begin(), symbol_table.end(),
 		[](const symbol &a, const symbol &b){
 			return a.value < b.value; 
 		});
 
-	for (const auto &lab : symbol_table) {
-		fprintf(stdout, "%-20s: $%06x\n", lab.name.c_str(), lab.value);
-	}
+	print_symbols2();
+
 }
 
 
@@ -391,6 +403,26 @@ void usage(int ex) {
 
 	fputs("merlin-link [-o outfile] infile...\n", stderr);
 	exit(ex);
+}
+
+/* older std libraries lack charconv and std::from_chars */
+bool parse_number(const char *begin, const char *end, uint32_t &value, int base = 10) {
+
+#if defined(HAVE_CHARCONV)
+	auto r =  std::from_chars(begin, end, value, base);
+	if (r.ec != std::errc() || r.ptr != end) return false;
+#else
+	auto xerrno = errno;
+	errno = 0;
+	char *ptr = nullptr;
+	value = stroul(begin, &ptr, base);
+	std::swap(errno, xerrno);
+	if (xerrno || ptr != end) {
+		return false;
+	}
+#endif
+
+	return true;
 }
 
 static void add_define(std::string str) {
@@ -422,9 +454,7 @@ static void add_define(std::string str) {
 				}
 				break;
 		}
-		auto end = str.data() + str.length();
-		auto r =  std::from_chars(str.data() + pos, end, value, base);
-		if (r.ec != std::errc() || r.ptr != end)
+		if (!parse_number(str.data() + pos, str.data() + str.length(), value, base))
 			usage(EX_USAGE);
 
 		str.resize(ix-1);
