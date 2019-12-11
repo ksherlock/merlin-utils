@@ -1,11 +1,13 @@
 /* c++17 */
 
-#include <vector>
-#include <unordered_map>
+#include <algorithm>
+#include <charconv>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <algorithm>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <cstdint>
 #include <cassert>
@@ -59,9 +61,9 @@ std::vector<omf::segment> segments;
 symbol *find_symbol(const std::string &name) {
 	
 	auto iter = symbol_map.find(name);
-	if (iter != symbol_map.end()) return &symbol_table[iter->second - 1];
+	if (iter != symbol_map.end()) return &symbol_table[iter->second];
 
-	unsigned id = symbol_table.size() + 1;
+	unsigned id = symbol_table.size();
 	symbol_map.emplace(name, id);
 
 	auto &rv = symbol_table.emplace_back();
@@ -222,7 +224,7 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			/* x = local symbol # */
 			pending_reloc r;
 			assert(x < cookie.remap.size());
-			r.id = cookie.remap[x]; /* label reference is 0-based */
+			r.id = cookie.remap[x];
 			r.size = size;
 			r.offset = offset;
 			r.value = value;
@@ -326,15 +328,35 @@ void finalize(void) {
 	auto &seg = segments.back();
 
 	for (auto &r : relocations) {
-		assert(r.id <= symbol_map.size());
-		const auto &label = symbol_table[r.id];
-		r.value = label.value;
+		assert(r.id < symbol_map.size());
+		const auto &e = symbol_table[r.id];
+
+		/* if this is an absolute value, do the math */
+		if (!e.defined) {
+			warnx("%s is not defined", e.name.c_str());
+			continue;
+		}
+
+		if (e.absolute) {
+			uint32_t value = e.value + r.value;
+			value >>= -r.shift;
+
+			unsigned offset = r.offset;
+			unsigned size = r.size;
+			while (size--) {
+				seg.data[offset++] = value & 0xff;
+				value >>= 8;
+			}
+			continue;
+		}
+
+		r.value += e.value;
 		seg.relocs.emplace_back(r);
 	}
 	relocations.clear();
 }
 
-void print_symbols(void) {
+void print_symbols(void) { 
 
 	if (symbol_table.empty()) return;
 
@@ -360,11 +382,65 @@ void print_symbols(void) {
 }
 
 
+
 void usage(int ex) {
 
 	fputs("merlin-link [-o outfile] infile...\n", stderr);
 	exit(ex);
 }
+
+static void add_define(std::string str) {
+	/* -D key[=value]
+ 		value = 0x, $, % or base 10 */
+
+	uint32_t value = 0;
+
+	auto ix = str.find('=');
+	if (ix == 0) usage(EX_USAGE);
+	if (ix == str.npos) {
+		value = 1;
+	} else {
+
+		int base = 10;
+		auto pos = ++ix;
+
+		char c = str[pos]; /* returns 0 if == size */
+
+		switch(c) {
+			case '%':
+				base = 2; ++pos; break;
+			case '$':
+				base = 16; ++pos; break;
+			case '0':
+				c = str[pos+1];
+				if (c == 'x' || c == 'X') {
+					base = 16; pos += 2;					
+				}
+				break;
+		}
+		auto end = str.data() + str.length();
+		auto r =  std::from_chars(str.data() + pos, end, value, base);
+		if (r.ec != std::errc() || r.ptr != end)
+			usage(EX_USAGE);
+
+		str.resize(ix-1);
+	}
+
+
+	symbol *e = find_symbol(str);
+	if (e->defined && e->absolute && e->value == value) return;
+
+	if (e->defined) {
+		warnx("%s previously defined", str.c_str());
+		return;
+	}
+
+	e->defined = true;
+	e->absolute = true;
+	e->file = "-D";
+	e->value = value;
+}
+
 
 int main(int argc, char **argv) {
 
@@ -374,13 +450,14 @@ int main(int argc, char **argv) {
 	bool compress = true;
 
 
-	while ((c = getopt(argc, argv, "o:XC")) != -1) {
+	while ((c = getopt(argc, argv, "o:D:XC")) != -1) {
 		switch(c) {
 			case 'o':
 				gs_out = optarg;
 				break;
 			case 'X': express = false; break;
 			case 'C': compress = false; break;
+			case 'D': add_define(optarg); break;
 			case ':':
 			case '?':
 			default:
@@ -404,6 +481,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	finalize();
 	print_symbols();
 
 	try {
