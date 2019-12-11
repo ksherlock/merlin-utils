@@ -221,12 +221,10 @@ void process_reloc(byte_view &data, cookie &cookie) {
 
 
 			if (size > 1) value -= 0x8000;
-			value += cookie.begin;
 
 		}
 
 		/* external resolutions are deferred for later */
-
 		if (external) {
 			/* x = local symbol # */
 			pending_reloc r;
@@ -243,7 +241,7 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			omf::reloc r;
 			r.size = size;
 			r.offset = offset;
-			r.value = value;
+			r.value = value + cookie.begin;
 			r.shift = shift;
 
 			seg.relocs.emplace_back(r);
@@ -362,6 +360,11 @@ void resolve(void) {
 		seg.relocs.emplace_back(r);
 	}
 	relocations.clear();
+
+	/* sort them */
+	std::sort(seg.relocs.begin(), seg.relocs.end(), [](const omf::reloc &a, const omf::reloc &b){
+		return a.offset < b.offset;
+	});
 }
 
 static void print_symbols2(void) {
