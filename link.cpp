@@ -329,7 +329,7 @@ void process_unit(const std::string &path) {
 }
 
 
-void finalize(void) {
+void resolve(void) {
 
 	/* this needs to be updated if supporting multiple segments */
 	auto &seg = segments.back();
@@ -346,7 +346,8 @@ void finalize(void) {
 
 		if (e.absolute) {
 			uint32_t value = e.value + r.value;
-			value >>= -r.shift;
+			/* shift is a uint8_t so negating doesn't work right */
+			value >>= -(int8_t)r.shift;
 
 			unsigned offset = r.offset;
 			unsigned size = r.size;
@@ -516,7 +517,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	finalize();
+	resolve();
 	print_symbols();
 
 	try {
