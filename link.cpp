@@ -1,13 +1,17 @@
 /* c++17 */
 
 #include <algorithm>
-#include <charconv>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+/* old version of stdlib have this stuff in utility */
+#if __has_include(<charconv>)
+#include <charconv>
+#endif
 
 #include <cstdint>
 #include <cassert>
