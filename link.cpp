@@ -26,6 +26,7 @@
 #include "omf.h"
 #include "rel.h"
 #include "link.h"
+#include "script.h"
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
 int set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type, std::error_code &ec);
@@ -420,7 +421,7 @@ namespace {
 	uint32_t active_bits = 1;
 	bool active = true;
 
-	std::unordered_map<std::string, uint32_t> symbol_table; 
+	std::unordered_map<std::string, uint32_t> local_symbol_table; 
 
 }
 
@@ -463,7 +464,8 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 			if (!end && lkv == 2) {
 				/* finish up */
 				segments.pop_back();
-				finish();
+				if (!segments.empty())
+					finish();
 			}
 			end = true;
 			break;
@@ -471,13 +473,13 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 		case OP_DAT: {
 			/* 29-DEC-88   4:18:37 PM */
 			time_t t = time(nullptr);
-			struct tm tm = localtime(&t);
+			struct tm *tm = localtime(&t);
 			char buffer[32];
 
 			strftime(buffer, sizeof(buffer), "%d-%b-%y  %H:%M:%S %p", tm);
 			for(char &c : buffer) c = std::toupper(c);
 
-			printf(stdout, "%s\n", buffer);
+			fprintf(stdout, "%s\n", buffer);
 			break;
 		}
 
@@ -539,7 +541,6 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 				seg.segname = std::get<std::string>(operand);
 				seg.kind = kind;
 
-				/* if this is the first segment, also save the 
 				/* add a new segment */
 				segments.emplace_back();
 			}
@@ -560,12 +561,16 @@ void process_script(const char *path) {
 
 	extern void parse_line(const char *);
 
-	FILE *fp;
-	fp = fopen(path, "r");
-	if (!fp) {
-		warn("Unable to open %s", path);
-		return -1;
+	FILE *fp = nullptr;
+
+	if (!path || !strcmp(path, "-")) fp = stdin;
+	else {
+		fp = fopen(path, "r");
+		if (!fp) {
+			err(1, "Unable to open %s", path);
+		}
 	}
+
 
 	int no = 1;
 	int errors = 0;
@@ -598,7 +603,8 @@ void process_script(const char *path) {
 			}
 		}
 	}
-	fclose(fp);
+	if (fp != stdin)
+		fclose(fp);
 	free(line);
 	exit(errors ? EX_DATAERR : 0);
 }

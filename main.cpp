@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
 	if (script && argc > 1) usage(EX_USAGE);
 	if (argc == 1 && is_S(*argv)) script = true;
 
-	if (script) process_script(*argv);
+	if (script) process_script(argc ? *argv : nullptr);
 	else process_files(argc, argv);
 
 	exit(0);

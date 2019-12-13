@@ -33,7 +33,7 @@
 */
 
 namespace {
-	std::unordered_map<std::string, int> opcodes = {
+	std::unordered_map<std::string, opcode_t> opcodes = {
 		#define x(op) { #op, OP_##op },
 
 		#include "ops.h"
@@ -496,7 +496,7 @@ operand:
 		}
 
 		case OP_CMD:
-			str_operand = std::string(YYCURSOR);
+			operand = std::string(YYCURSOR);
 			break;
 
 		default:
