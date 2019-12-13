@@ -133,7 +133,8 @@ int main(int argc, char **argv) {
 			case 'X': express = false; break;
 			case 'C': compress = false; break;
 			case 'D': add_define(optarg); break;
-			case 'v': verbose = true;
+			case 'v': verbose = true; break;
+			case 'S': script = true; break;
 			case ':':
 			case '?':
 			default:
@@ -145,8 +146,7 @@ int main(int argc, char **argv) {
 	argv += optind;
 	argc -= optind;
 
-	if (!argc) usage(EX_USAGE);
-
+	if (!script && !argc) usage(EX_USAGE);
 	if (script && argc > 1) usage(EX_USAGE);
 	if (argc == 1 && is_S(*argv)) script = true;
 

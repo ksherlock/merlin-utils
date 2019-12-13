@@ -507,7 +507,7 @@ operand:
 
 	void evaluate(label_t label, opcode_t opcode, operand_t operand);
 
-	evaluate(label, opcode, opcode);
+	evaluate(label, opcode, operand);
 }
 
 
