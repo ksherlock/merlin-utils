@@ -8,21 +8,15 @@
 #include <utility>
 #include <vector>
 
-/* old version of stdlib have this stuff in utility */
-#if __has_include(<charconv>)
-#define HAVE_CHARCONV
-#include <charconv>
-#endif
 
 #include <cassert>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
+#include <ctime>
 
 #include <err.h>
 #include <sysexits.h>
-#include <unistd.h>
 
 #include <afp/finder_info.h>
 
@@ -31,6 +25,7 @@
 
 #include "omf.h"
 #include "rel.h"
+#include "link.h"
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
 int set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type, std::error_code &ec);
@@ -40,35 +35,41 @@ void set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_typ
 typedef std::basic_string_view<uint8_t> byte_view;
 
 
-struct symbol {
-	std::string name;
-	std::string file;
-	uint32_t value = 0;
-	unsigned id = 0;
-	unsigned count = 0;
-
-	bool absolute = false;
-	bool defined = false;
-};
-
-
-std::unordered_map<std::string, unsigned> symbol_map;
-std::vector<symbol> symbol_table;
 
 struct pending_reloc : public omf::reloc {
 	unsigned id = 0;
 };
 
-std::vector<pending_reloc> relocations;
 
 
-std::vector<omf::segment> segments;
+struct cookie {
+	std::string file;
+	std::vector<unsigned> remap;
+
+	uint32_t begin = 0;
+	uint32_t end = 0;
+};
+
+
+namespace {
+
+
+	std::unordered_map<std::string, unsigned> symbol_map;
+	std::vector<symbol> symbol_table;
+
+	std::vector<pending_reloc> relocations;
+	std::vector<omf::segment> segments;
+
+
+}
+
 
 /* nb - pointer may be invalidated by next call */
-symbol *find_symbol(const std::string &name) {
+symbol *find_symbol(const std::string &name, bool insert) {
 	
 	auto iter = symbol_map.find(name);
 	if (iter != symbol_map.end()) return &symbol_table[iter->second];
+	if (!insert) return nullptr;
 
 	unsigned id = symbol_table.size();
 	symbol_map.emplace(name, id);
@@ -81,16 +82,7 @@ symbol *find_symbol(const std::string &name) {
 
 
 
-struct cookie {
-	std::string file;
-	std::vector<unsigned> remap;
-	//std::vector<std::pair<unsigned, unsigned>> zero;
-
-	uint32_t begin = 0;
-	uint32_t end = 0;
-};
-
-void process_labels(byte_view &data, cookie &cookie) {
+static void process_labels(byte_view &data, cookie &cookie) {
 
 	for(;;) {
 		assert(data.size());
@@ -144,7 +136,7 @@ void process_labels(byte_view &data, cookie &cookie) {
 }
 
 
-void process_reloc(byte_view &data, cookie &cookie) {
+static void process_reloc(byte_view &data, cookie &cookie) {
 
 	auto &seg = segments.back();
 
@@ -254,21 +246,8 @@ void process_reloc(byte_view &data, cookie &cookie) {
 	}
 }
 
-/*
-void add_libraries() {
-	auto iter = libs.begin();
-	auto end = libs.end();
 
-	for(;;) {
-
-
-
-	}
-}
-*/
-
-
-void process_unit(const std::string &path) {
+static void process_unit(const std::string &path) {
 
 	cookie cookie;
 	/* skip over relocs, do symbols first */
@@ -327,7 +306,7 @@ void process_unit(const std::string &path) {
 }
 
 
-void resolve(void) {
+static void resolve(void) {
 
 	/* this needs to be updated if supporting multiple segments */
 	auto &seg = segments.back();
@@ -377,7 +356,7 @@ static void print_symbols2(void) {
 	}	
 }
 
-void print_symbols(void) { 
+static void print_symbols(void) { 
 
 	if (symbol_table.empty()) return;
 
@@ -402,113 +381,21 @@ void print_symbols(void) {
 
 }
 
+void finish(void) {
 
+	resolve();
+	print_symbols();
 
-void usage(int ex) {
+	try {
+		save_omf(save_file, segments, compress, express);
+		set_file_type(save_file, 0xb3, 0x0000);
+	} catch (std::exception &ex) {
+		errx(EX_OSERR, "%s: %s", save_file.c_str(), ex.what());
+	}
 
-	fputs("merlin-link [-o outfile] infile...\n", stderr);
-	exit(ex);
 }
 
-/* older std libraries lack charconv and std::from_chars */
-bool parse_number(const char *begin, const char *end, uint32_t &value, int base = 10) {
-
-#if defined(HAVE_CHARCONV)
-	auto r =  std::from_chars(begin, end, value, base);
-	if (r.ec != std::errc() || r.ptr != end) return false;
-#else
-	auto xerrno = errno;
-	errno = 0;
-	char *ptr = nullptr;
-	value = std::strtoul(begin, &ptr, base);
-	std::swap(errno, xerrno);
-	if (xerrno || ptr != end) {
-		return false;
-	}
-#endif
-
-	return true;
-}
-
-static void add_define(std::string str) {
-	/* -D key[=value]
- 		value = 0x, $, % or base 10 */
-
-	uint32_t value = 0;
-
-	auto ix = str.find('=');
-	if (ix == 0) usage(EX_USAGE);
-	if (ix == str.npos) {
-		value = 1;
-	} else {
-
-		int base = 10;
-		auto pos = ++ix;
-
-		char c = str[pos]; /* returns 0 if == size */
-
-		switch(c) {
-			case '%':
-				base = 2; ++pos; break;
-			case '$':
-				base = 16; ++pos; break;
-			case '0':
-				c = str[pos+1];
-				if (c == 'x' || c == 'X') {
-					base = 16; pos += 2;					
-				}
-				break;
-		}
-		if (!parse_number(str.data() + pos, str.data() + str.length(), value, base))
-			usage(EX_USAGE);
-
-		str.resize(ix-1);
-	}
-
-
-	symbol *e = find_symbol(str);
-	if (e->defined && e->absolute && e->value == value) return;
-
-	if (e->defined) {
-		warnx("%s previously defined", str.c_str());
-		return;
-	}
-
-	e->defined = true;
-	e->absolute = true;
-	e->file = "-D";
-	e->value = value;
-}
-
-
-int main(int argc, char **argv) {
-
-	int c;
-	std::string gs_out = "gs.out";
-	bool express = true;
-	bool compress = true;
-
-
-	while ((c = getopt(argc, argv, "o:D:XC")) != -1) {
-		switch(c) {
-			case 'o':
-				gs_out = optarg;
-				break;
-			case 'X': express = false; break;
-			case 'C': compress = false; break;
-			case 'D': add_define(optarg); break;
-			case ':':
-			case '?':
-			default:
-				usage(EX_USAGE);
-				break;
-		}
-	}
-
-	argv += optind;
-	argc -= optind;
-
-	if (!argc) usage(EX_USAGE);
+void process_files(int argc, char **argv) {
 
 	segments.emplace_back();
 	for (int i = 0; i < argc; ++i) {
@@ -519,15 +406,200 @@ int main(int argc, char **argv) {
 			errx(EX_DATAERR, "%s: %s", path, ex.what());
 		}
 	}
-
-	resolve();
-	print_symbols();
-
-	try {
-		save_omf(gs_out, segments, compress, express);
-		set_file_type(gs_out, 0xb3, 0x0000);
-		exit(0);
-	} catch (std::exception &ex) {
-		errx(EX_OSERR, "%s: %s", gs_out.c_str(), ex.what());
-	}
 }
+
+namespace {
+
+	unsigned lkv = 1;
+	unsigned ver = 2;
+	unsigned ftype = 0xb3;
+	unsigned atype = 0x0000;
+	unsigned kind = 0x0000;
+	unsigned do_level = 0;
+	bool end = false;
+	uint32_t active_bits = 1;
+	bool active = true;
+
+	std::unordered_map<std::string, uint32_t> symbol_table; 
+
+}
+
+void evaluate(label_t label, opcode_t opcode, operand_t operand) {
+
+	switch(opcode) {
+		case OP_DO:
+			if (active_bits & 0x80000000) throw std::runtime_error("too much do do");
+			active_bits <<= 1;
+			active_bits |= std::get<uint32_t>(operand) ? 1 : 0;
+			active = (active_bits & (active_bits + 1)) == 0;
+			return;
+			break;
+
+		case OP_ELS:
+			if (active_bits < 2)
+				throw std::runtime_error("els without do");
+
+			active_bits ^= 0x01;
+			active = (active_bits & (active_bits + 1)) == 0;
+			return;
+			break;
+
+		case OP_FIN:
+			active_bits >>= 1;
+			if (!active_bits) {
+				active = 1;
+				throw std::runtime_error("fin without do");
+			}
+			active = (active_bits & (active_bits + 1)) == 0;
+
+			return;
+			break;
+	}
+	if (!active) return;
+
+	switch(opcode) {
+
+		case OP_END:
+			if (!end && lkv == 2) {
+				/* finish up */
+				segments.pop_back();
+				finish();
+			}
+			end = true;
+			break;
+
+		case OP_DAT: {
+			/* 29-DEC-88   4:18:37 PM */
+			time_t t = time(nullptr);
+			struct tm tm = localtime(&t);
+			char buffer[32];
+
+			strftime(buffer, sizeof(buffer), "%d-%b-%y  %H:%M:%S %p", tm);
+			for(char &c : buffer) c = std::toupper(c);
+
+			printf(stdout, "%s\n", buffer);
+			break;
+		}
+
+
+		case OP_TYP:
+			ftype = std::get<uint32_t>(operand);
+			break;
+		case OP_ADR:
+			atype = std::get<uint32_t>(operand);
+			break;
+
+		case OP_KND:
+			kind = std::get<uint32_t>(operand);
+			break;
+
+		case OP_LKV:
+			/* specify linker version */
+			/* 0 = binary, 1 = Linker.GS, 2 = Linker.XL, 3 = convert to OMF object file */
+
+			switch (std::get<uint32_t>(operand)) {
+				case 0: throw std::runtime_error("binary linker not supported");
+				case 3: throw std::runtime_error("object file linker not supported");
+				case 1:
+				case 2:
+					lkv = std::get<uint32_t>(operand);
+					break;
+				default:
+					throw std::runtime_error("bad linker version");
+			}
+			break;
+
+		case OP_VER:
+			/* OMF version, 1 or 2 */
+			if (std::get<uint32_t>(operand) != 2)
+				throw std::runtime_error("bad OMF version");
+			break;
+
+
+		case OP_LNK:
+			if (end) throw std::runtime_error("link after end");
+			//link_unit(std::get<std::string>(operand));
+			break;
+
+		case OP_SAV:
+			if (end) throw std::runtime_error("save after end");
+			if (save_file.empty()) save_file = std::get<std::string>(operand);
+
+			/* if linker version 1, save to disk */
+			/* if linker version 2, finish the current segment */
+			if (lkv == 1) {
+				auto &seg = segments.back();
+				seg.segname = std::get<std::string>(operand);
+				seg.kind = kind;
+				finish();
+				end = true;
+			}
+			if (lkv == 2) {
+				auto &seg = segments.back();
+				seg.segname = std::get<std::string>(operand);
+				seg.kind = kind;
+
+				/* if this is the first segment, also save the 
+				/* add a new segment */
+				segments.emplace_back();
+			}
+
+
+
+			break;
+
+
+		case OP_ASM:
+		default:
+			throw std::runtime_error("opcode not yet supported");		
+	}
+
+}
+
+void process_script(const char *path) {
+
+	extern void parse_line(const char *);
+
+	FILE *fp;
+	fp = fopen(path, "r");
+	if (!fp) {
+		warn("Unable to open %s", path);
+		return -1;
+	}
+
+	int no = 1;
+	int errors = 0;
+	char *line = NULL;
+	size_t cap = 0;
+	for(;; ++no) {
+
+		ssize_t len = getline(&line, &cap, fp);
+		if (len == 0) break;
+		if (len < 0) {
+			warn("read error");
+			++errors;
+			break;
+		}
+		/* strip trailing ws */
+		while (len && isspace(line[len-1])) --len;
+		line[len] = 0;
+		if (len == 0) continue; 
+
+		try {
+			parse_line(line);
+		} catch (std::exception &ex) {
+			if (~active & 0x01) continue;
+
+			fprintf(stderr, "%s in line: %d\n", ex.what(), no);
+			fprintf(stderr, "%s\n", line);
+			if (++errors >= 10) {
+				fputs("Too many errors, aborting\n", stderr);
+				break;
+			}
+		}
+	}
+	fclose(fp);
+	free(line);
+	exit(errors ? EX_DATAERR : 0);
+}
+
