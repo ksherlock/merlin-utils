@@ -604,6 +604,16 @@ static std::string basename(const std::string &str) {
 	return str.substr(0, ix);
 }
 
+/* fixup GS/OS strings. */
+static void fix_path(std::string &s) {
+	for (char &c : s)
+		if (c == ':') c = '/';
+}
+
+/*
+ SEG name -> undocumented? command to set the OMF segment name (linker 3 only)
+
+ */
 void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 	// todo - should move operand parsing to here.
@@ -671,6 +681,17 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			for (char &c : buffer) c = std::toupper(c);
 
 			fprintf(stdout, "%s\n", buffer);
+			break;
+		}
+
+		case OP_PFX: {
+
+			std::string path = path_operand(cursor);
+			fix_path(path);
+
+			int ok = chdir(path.c_str());
+			if (ok < 0)
+				warn("PFX %s", path.c_str());
 			break;
 		}
 
