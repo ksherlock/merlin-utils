@@ -105,7 +105,7 @@ static bool is_S(std::string_view sv) {
 
 
 bool verbose = false;
-std::string save_file = "gs.out";
+std::string save_file;
 bool express = true;
 bool compress = true;
 

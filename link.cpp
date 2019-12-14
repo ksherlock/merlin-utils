@@ -555,6 +555,7 @@ void finish(void) {
 	resolve();
 	print_symbols();
 
+	if (save_file.empty()) save_file = "gs.out";
 	try {
 		save_omf(save_file, segments, compress, express);
 		set_file_type(save_file, ftype, atype);
