@@ -816,6 +816,12 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			define(label, number_operand(cursor, local_symbol_table), LBL_GEQ);
 			break;
 
+		case OP_SEG: {
+			/* OMF object file linker - set the object file seg name */
+			std::string name = label_operand(cursor);
+			break;
+		}
+
 		case OP_FAS:
 			/* fast linker, only 1 file allowed */
 			fas = true;

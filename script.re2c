@@ -222,7 +222,7 @@ std::string path_operand(const char *YYCURSOR, int flags) {
 		}
 
 		// don't allow leading quotes, eof, or comment chars
-		. [^ \t]* {
+		[^ \t\x00;*'"][^ \t\x00]* {
 			rv = std::string(iter, YYCURSOR);
 			goto exit;
 		}
