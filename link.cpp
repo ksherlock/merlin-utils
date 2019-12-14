@@ -713,10 +713,11 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 			char *cp = fgets(buffer, sizeof(buffer), stdin);
 
 			if (!cp) return;
-			uint32_t value = 0;
-			// evaluate string.  expressions and labels are allowed.... 
 
-			define(label, value, LBL_KBD);
+			operand_t number_operand(const char *YYCURSOR, bool required);
+			operand_t op = number_operand(cp, true);
+
+			define(label, eval(op), LBL_KBD);
 			break;
 		}
 

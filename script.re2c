@@ -179,8 +179,8 @@ exit:
 
 
 
-
-static operand_t number_operand(const char *YYCURSOR, bool required = true) {
+/* not static - called from link.cpp */
+operand_t number_operand(const char *YYCURSOR, bool required = true) {
 
 	const char *iter = YYCURSOR;
 	// const char *YYMARKER = nullptr;
