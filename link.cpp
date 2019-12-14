@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 
 #include <err.h>
@@ -804,7 +805,7 @@ void process_script(const char *path) {
 		try {
 			parse_line(line);
 		} catch (std::exception &ex) {
-			if (~active & 0x01) continue;
+			if (!active) continue;
 
 			fprintf(stderr, "%s in line: %d\n", ex.what(), no);
 			fprintf(stderr, "%s\n", line);
