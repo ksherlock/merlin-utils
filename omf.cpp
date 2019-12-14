@@ -63,6 +63,9 @@ struct omf_express_header {
 
 #pragma pack(pop)
 
+static_assert(sizeof(omf_header) == 44, "OMF Header not packed");
+static_assert(sizeof(omf_express_header) == 48, "OMF Express Header not packed");
+
 void push(std::vector<uint8_t> &v, uint8_t x) {
 	v.push_back(x);
 }
