@@ -259,7 +259,7 @@ static void process_labels(byte_view &data, cookie &cookie) {
 				}
 				e->defined = true;
 				e->file = cookie.file;
-				e->segment = segments.size();
+				e->segment = segments.size() - 1; /* 1-based */
 				if (flag & SYMBOL_ABSOLUTE) {
 					e->absolute = true;
 					e->value = value;
@@ -457,6 +457,7 @@ static void resolve(void) {
 		auto &seg = segments[seg_num];
 		auto &pending = relocations[seg_num];
 
+		seg.segnum = seg_num + 1;
 
 		for (auto &r : pending) {
 			assert(r.id < symbol_map.size());
@@ -482,6 +483,7 @@ static void resolve(void) {
 				continue;
 			}
 
+			/* e.segment is 0-based */
 			if (e.segment == seg_num) {
 				r.value += e.value;
 				seg.relocs.emplace_back(r);
@@ -492,7 +494,7 @@ static void resolve(void) {
 			inter.size = r.size;
 			inter.shift = r.shift;
 			inter.offset = r.offset;
-			inter.segment = e.segment;
+			inter.segment = e.segment + 1; /* 1-based */
 			inter.segment_offset = r.value + e.value;
 
 			seg.intersegs.emplace_back(inter);
