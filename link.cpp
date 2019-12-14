@@ -63,6 +63,44 @@ namespace {
 	std::vector<omf::segment> segments;
 	std::vector<std::vector<pending_reloc>> relocations;
 
+	std::unordered_map<std::string, uint32_t> file_types = {
+
+		{ "NON", 0x00 },
+		{ "BAD", 0x01 },
+		{ "BIN", 0x06 },
+		{ "TXT", 0x04 },
+		{ "DIR", 0x0f },
+		{ "ADB", 0x19 },
+		{ "AWP", 0x1a },
+		{ "ASP", 0x1b },
+		{ "GSB", 0xab },
+		{ "TDF", 0xac },
+		{ "BDF", 0xad },
+		{ "SRC", 0xb0 },
+		{ "OBJ", 0xb1 },
+		{ "LIB", 0xb2 },
+		{ "S16", 0xb3 },
+		{ "RTL", 0xb4 },
+		{ "EXE", 0xb5 },
+		{ "PIF", 0xb6 },
+		{ "TIF", 0xb7 },
+		{ "NDA", 0xb8 },
+		{ "CDA", 0xb9 },
+		{ "TOL", 0xba },
+		{ "DRV", 0xbb },
+		{ "DOC", 0xbf },
+		{ "PNT", 0xc0 },
+		{ "PIC", 0xc1 },
+		{ "FON", 0xcb },
+		{ "PAS", 0xef },
+		{ "CMD", 0xf0 },
+		{ "LNK", 0xf8 },
+		{ "BAS", 0xfc },
+		{ "VAR", 0xfd },
+		{ "REL", 0xfe },
+		{ "SYS", 0xff },
+
+	};
 
 }
 
@@ -120,6 +158,8 @@ namespace {
 	unsigned kind = 0x0000;
 	unsigned sav = 0;
 	bool end = false;
+	bool fas = false;
+	int ovr = OVR_OFF;
 
 	size_t pos_offset = 0;
 	size_t len_offset = 0;
@@ -545,16 +585,24 @@ static bool op_after_end(opcode_t op) {
 	}
 }
 
-static uint32_t eval(operand_t op) {
-	if (std::holds_alternative<uint32_t>(op)) return std::get<uint32_t>(op);
-	std::string &name = std::get<std::string>(op);
-	auto iter = local_symbol_table.find(name);
-	if (iter == local_symbol_table.end()) throw std::runtime_error("Bad symbol");
-	return iter->second;
+
+extern uint32_t number_operand(const char *cursor, int flags = OP_REQUIRED);
+extern uint32_t number_operand(const char *cursor, const std::unordered_map<std::string, uint32_t> &, int flags = OP_REQUIRED);
+extern int ovr_operand(const char *cursor);
+extern std::string label_operand(const char *cursor, int flags = OP_REQUIRED);
+extern std::string string_operand(const char *cursor, int flags = OP_REQUIRED);
+extern std::string path_operand(const char *cursor, int flags = OP_REQUIRED);
+
+extern void no_operand(const char *cursor);
+
+static std::string basename(const std::string &str) {
+
+	auto ix = str.find_last_of("/:");
+	if (ix == str.npos) return str;
+	return str.substr(0, ix);
 }
 
-
-void evaluate(label_t label, opcode_t opcode, operand_t operand) {
+void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 	// todo - should move operand parsing to here.
 
@@ -562,8 +610,11 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 		case OP_DO:
 			if (active_bits & 0x80000000) throw std::runtime_error("too much do do");
 			active_bits <<= 1;
-			active_bits |= eval(operand) ? 1 : 0;
-			active = (active_bits & (active_bits + 1)) == 0;
+			if (active) {
+				uint32_t value = number_operand(cursor, local_symbol_table);
+				active_bits |= value ? 1 : 0;
+				active = (active_bits & (active_bits + 1)) == 0;
+			}
 			return;
 			break;
 
@@ -623,22 +674,20 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 
 
 		case OP_TYP:
-			// todo - should evaluate with file type dictionary.
-			ftype = eval(operand);
+			ftype = number_operand(cursor, file_types, OP_REQUIRED | OP_INSENSITIVE);
 			break;
 		case OP_ADR:
-			atype = eval(operand);
+			atype = number_operand(cursor, local_symbol_table);
 			break;
-
 		case OP_KND:
-			kind = eval(operand);
+			kind = number_operand(cursor, local_symbol_table);
 			break;
 
 		case OP_LKV: {
 			/* specify linker version */
 			/* 0 = binary, 1 = Linker.GS, 2 = Linker.XL, 3 = convert to OMF object file */
 
-			uint32_t value = eval(operand);
+			uint32_t value = number_operand(cursor, local_symbol_table);
 			switch (value) {
 				case 0: throw std::runtime_error("binary linker not supported");
 				case 3: throw std::runtime_error("object file linker not supported");
@@ -654,7 +703,7 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 
 		case OP_VER: {
 			/* OMF version, 1 or 2 */
-			uint32_t value = eval(operand);
+			uint32_t value = number_operand(cursor, local_symbol_table);
 
 			if (value != 2)
 				throw std::runtime_error("bad OMF version");
@@ -662,29 +711,40 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 			break;
 		}
 
-		case OP_LNK:
+		case OP_LNK: {
 			if (end) throw std::runtime_error("link after end");
-			//link_unit(std::get<std::string>(operand));
+
+			std::string path = path_operand(cursor);
+			process_unit(path);
 			break;
+		}
 
-		case OP_SAV:
+		case OP_SAV: {
 			if (end) throw std::runtime_error("save after end");
-			if (save_file.empty()) save_file = std::get<std::string>(operand);
 
-			/* if linker version 1, save to disk */
-			/* if linker version 2, finish the current segment */
-			if (lkv == 1) {
+			std::string path = path_operand(cursor);
+
+			/* use 1st SAV as the path */
+			if (save_file.empty()) save_file = path;
+
+			/*
+				lkv 0 = binary linker (unsupported)
+				lkv 1 = 1 segment GS linker
+				lkv 2 = multi-segment GS linker
+				lkv 3 = convert REL to OMF object file (unsupported)
+			 */
+
+			if (lkv == 1 || lkv == 2 || lkv == 3) {
 				auto &seg = segments.back();
-				seg.segname = std::get<std::string>(operand);
+				std::string base = basename(path);
+				seg.segname = std::move(base);
 				seg.kind = kind;
+			}
+			if (lkv == 1) {
 				finish();
 				end = true;
 			}
 			if (lkv == 2) {
-				auto &seg = segments.back();
-				seg.segname = std::get<std::string>(operand);
-				seg.kind = kind;
-
 				/* add a new segment */
 				segments.emplace_back();
 				relocations.emplace_back();
@@ -692,9 +752,9 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 			}
 			++sav;
 			break;
+		}
 
 		case OP_KBD: {
-			std::string prompt;
 			char buffer[256];
 
 			if (!isatty(STDIN_FILENO)) return;
@@ -703,8 +763,7 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 			if (local_symbol_table.find(label) != local_symbol_table.end())
 				return;
 
-			if (std::holds_alternative<std::string>(operand)) 
-				prompt = std::get<std::string>(operand);
+			std::string prompt = string_operand(cursor, OP_OPTIONAL);
 
 			if (prompt.empty()) prompt = "Give value for " + label;
 			prompt += ": ";
@@ -713,12 +772,11 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 
 			char *cp = fgets(buffer, sizeof(buffer), stdin);
 
-			if (!cp) return;
+			if (!cp) throw std::runtime_error("Bad input");
 
-			operand_t number_operand(const char *YYCURSOR, bool required);
-			operand_t op = number_operand(cp, true);
+			uint32_t value = number_operand(cp, local_symbol_table, true);
 
-			define(label, eval(op), LBL_KBD);
+			define(label, value, LBL_KBD);
 			break;
 		}
 
@@ -726,10 +784,10 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 			// POS label << sets label = current segment offset
 			// POS  << resets pos byte counter.
 
-			if (std::holds_alternative<std::monostate>(operand)) {
+			std::string label = label_operand(cursor, OP_OPTIONAL);
+			if (label.empty()) {
 				pos_offset = segments.back().data.size();
 			} else {
-				std::string label = std::get<std::string>(operand);
 				uint32_t value = segments.back().data.size() - pos_offset;
 
 				define(label, value, LBL_POS);
@@ -739,30 +797,44 @@ void evaluate(label_t label, opcode_t opcode, operand_t operand) {
 		case OP_LEN: {
 			// LEN label
 			// sets label = length of most recent file linked
-			std::string label = std::get<std::string>(operand);
+
+			std::string label = label_operand(cursor);
 			uint32_t value = len_offset;
 			define(label, value, LBL_LEN);
 			break;
 		}
 
 		case OP_EQ:
-			define(label, eval(operand), LBL_EQ);
+			define(label, number_operand(cursor, local_symbol_table), LBL_EQ);
 			break;
 		case OP_EQU:
-			define(label, eval(operand), LBL_EQU);
+			define(label, number_operand(cursor, local_symbol_table), LBL_EQU);
 			break;
 		case OP_GEQ:
-			define(label, eval(operand), LBL_GEQ);
+			define(label, number_operand(cursor, local_symbol_table), LBL_GEQ);
 			break;
 
 		case OP_FAS:
 			/* fast linker, only 1 file allowed */
+			fas = true;
+			break;
 		case OP_OVR:
-		case OP_PUT:
-		case OP_IF:
+			ovr = ovr_operand(cursor);
 			break;
 
-		case OP_ASM:
+		case OP_PUT: {
+			std::string path = path_operand(cursor);
+			break;
+		}
+		case OP_IF: {
+			std::string path = path_operand(cursor);
+			break;
+		}
+
+		case OP_ASM: {
+			std::string path = path_operand(cursor);
+			break;			
+		}
 		default:
 			throw std::runtime_error("opcode not yet supported");		
 	}

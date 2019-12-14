@@ -3,10 +3,8 @@
 
 #include <cstdint>
 #include <string>
-#include <variant>
 
 typedef std::string label_t;
-typedef std::variant<std::monostate, uint32_t, std::string> operand_t;
 
 enum opcode_t {
 	
@@ -21,6 +19,12 @@ enum {
 	OVR_NONE = 1,
 	OVR_ALL = -1,
 	OVR_OFF = 0
+};
+
+enum {
+	OP_OPTIONAL = 0,
+	OP_REQUIRED = 1,
+	OP_INSENSITIVE = 2
 };
 
 #endif
