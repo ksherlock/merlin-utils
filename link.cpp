@@ -157,6 +157,7 @@ namespace {
 	unsigned atype = 0x0000;
 	unsigned kind = 0x0000;
 	unsigned sav = 0;
+	unsigned lnk = 0;
 	bool end = false;
 	bool fas = false;
 	int ovr = OVR_OFF;
@@ -703,9 +704,23 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 		case OP_ADR:
 			atype = number_operand(cursor, local_symbol_table);
 			break;
-		case OP_KND:
-			kind = number_operand(cursor, local_symbol_table);
+		case OP_KND: {
+			uint32_t kind = number_operand(cursor, local_symbol_table);
+			if (!segments.empty())
+				segments.back().kind = kind;
 			break;
+		}
+		case OP_ALI: {
+			uint32_t align = number_operand(cursor, local_symbol_table);
+			// must be power of 2 or 0
+			if ((align & (align-1)) == 0) {
+				// not yet supported.
+			} else {
+				throw std::runtime_error("Bad alignment");
+			}
+			break;
+		}
+
 
 		case OP_LKV: {
 			/* specify linker version */
@@ -740,6 +755,20 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 			std::string path = path_operand(cursor);
 			process_unit(path);
+			++lnk;
+			break;
+		}
+
+		case OP_IMP: {
+
+			/* qasm addition. import binary file. entry name is filename w/ . converted to _ */
+			std::string path = path_operand(cursor);
+			std::string name = basename(path);
+			for (char &c : name) {
+				c = std::isalnum(c) ? std::toupper(c) : '_';
+			}
+			// ...
+			++lnk;
 			break;
 		}
 
@@ -761,8 +790,9 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			if (lkv == 1 || lkv == 2 || lkv == 3) {
 				auto &seg = segments.back();
 				std::string base = basename(path);
-				seg.segname = std::move(base);
-				seg.kind = kind;
+				seg.segname = base;
+				seg.loadname = base;
+				// seg.kind = kind;
 			}
 			if (lkv == 1) {
 				finish();
@@ -848,6 +878,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			/* fast linker, only 1 file allowed */
 			fas = true;
 			break;
+
 		case OP_OVR:
 			ovr = ovr_operand(cursor);
 			break;
@@ -939,5 +970,7 @@ void process_files(int argc, char **argv) {
 			errx(EX_DATAERR, "%s: %s", path, ex.what());
 		}
 	}
+	finish();
+	exit(0);
 }
 
