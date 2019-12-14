@@ -450,6 +450,33 @@ static void process_unit(const std::string &path) {
 	len_offset = offset;
 }
 
+static void import(const std::string &path, const std::string &name) {
+
+	std::error_code ec;
+	mapped_file mf(path, mapped_file::readonly, ec);
+	if (ec) {
+		errx(1, "Unable to open %s: %s", path.c_str(), ec.message().c_str());
+	}
+
+	auto &seg = segments.back();
+
+	// check for duplicate label.
+	auto e = find_symbol(name);
+	if (e->defined) {
+		warnx("Duplicate symbol %s", name.c_str());
+		return;
+	}
+
+	e->file = path;
+	e->defined = true;
+	e->value = seg.data.size();
+	e->segment = segments.size()-1;
+
+	seg.data.insert(seg.data.end(), mf.data(), mf.data() + mf.size());
+
+	// LEN support
+	len_offset = mf.size();
+}
 
 static void resolve(void) {
 
@@ -767,7 +794,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			for (char &c : name) {
 				c = std::isalnum(c) ? std::toupper(c) : '_';
 			}
-			// ...
+			import(path, name);
 			++lnk;
 			break;
 		}
@@ -790,6 +817,8 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			if (lkv == 1 || lkv == 2 || lkv == 3) {
 				auto &seg = segments.back();
 				std::string base = basename(path);
+				/* merlin link uses a 10-char fixed label */
+				//base.resize(10, ' ');
 				seg.segname = base;
 				seg.loadname = base;
 				// seg.kind = kind;
