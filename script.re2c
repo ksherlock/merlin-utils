@@ -30,6 +30,10 @@
 	ident = [:<-~][0-~]*;
 	ws = [ \t];
 	eof = "\x00";
+
+	number_prefix = [%$0-9];
+	ident_prefix = [:-~];
+	string_prefix = ['"];
 */
 
 namespace {
@@ -89,122 +93,11 @@ namespace {
 }
 
 
-static uint32_t number_operand(const char *YYCURSOR, bool required = true) {
-
-	const char *iter = YYCURSOR;
-	const char *YYMARKER = nullptr;
-	uint32_t rv = 0;
-	/*!re2c
-		* { throw std::invalid_argument("bad operand"); }
-		[;*] | eof {
-			if (!required) return rv;
-			throw std::invalid_argument("missing operand");
-		}
-		'%' [01]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				rv <<= 1;
-				rv |= *iter - '0';
-			}
-			goto exit;		
-		}
-
-		'$' [A-Fa-f0-9]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				char c = *iter | 0x20;
-				rv <<= 4;
-				if (c <= '9') rv |= c - '0';
-				else rv |= c - 'a' + 10;
-			}
-			goto exit;		
-		}
-
-		[0-9]+ {
-			for(;iter < YYCURSOR; ++iter) {
-				rv *= 10;
-				rv += *iter - '0';
-			}
-			goto exit;		
-	
-		}
-
-		ident {
-			std::string s(iter, YYCURSOR);
-			//look up symbol, verify it's an absolute value, etc
-		}
-	*/
-exit:
-	char c = *YYCURSOR;
-	if (isspace(c) || c == 0) return rv;
-
-	throw std::invalid_argument("bad operand");
-}
-
-static uint32_t type_operand(const char *YYCURSOR, bool required = true) {
-
-	const char *iter = YYCURSOR;
-	const char *YYMARKER = nullptr;
-	uint32_t rv = 0;
-	/*!re2c
-		* { throw std::invalid_argument("bad operand"); }
-
-		[;*] | eof {
-			if (!required) return rv;
-			throw std::invalid_argument("missing operand");
-		}
-
-		'%' [01]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				rv <<= 1;
-				rv |= *iter - '0';
-			}
-			goto exit;		
-		}
-
-		'$' [A-Fa-f0-9]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				char c = *iter | 0x20;
-				rv <<= 4;
-				if (c <= '9') rv |= c - '0';
-				else rv |= c - 'a' + 10;
-			}
-			goto exit;		
-		}
-
-		[0-9]+ {
-			for(;iter < YYCURSOR; ++iter) {
-				rv *= 10;
-				rv += *iter - '0';
-			}
-			goto exit;		
-	
-		}
-
-		[A-Za-z][A-Za-z0-9]{2} {
-			std::string s(iter, YYCURSOR);
-			for(char &c : s) c = std::toupper(c);
-			auto iter = types.find(s);
-			if (iter == types.end()) {
-				throw std::invalid_argument("bad operand");
-			}
-			rv = iter->second;
-		}
-	*/
-exit:
-	char c = *YYCURSOR;
-	if (isspace(c) || c == 0) return rv;
-
-	throw std::invalid_argument("bad operand");
-}
-
 
 
 static int x_number_operand(const char *YYCURSOR) {
 	const char *iter = YYCURSOR;
-	const char *YYMARKER = nullptr;
+	// const char *YYMARKER = nullptr;
 	uint32_t rv = 0;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
@@ -247,13 +140,13 @@ exit:
 
 static std::string x_label_operand(const char *YYCURSOR) {
 	const char *iter = YYCURSOR;
-	const char *YYMARKER = nullptr;
+	// const char *YYMARKER = nullptr;
 	std::string rv;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 
 		ident {
-			std::string s(iter, YYCURSOR);
+			rv = std::string(iter, YYCURSOR);
 			goto exit;
 		}
 	*/
@@ -286,6 +179,61 @@ exit:
 
 
 
+
+static operand_t number_operand(const char *YYCURSOR, bool required = true) {
+
+	const char *iter = YYCURSOR;
+	// const char *YYMARKER = nullptr;
+	/*!re2c
+		* { throw std::invalid_argument("bad operand"); }
+		[;*] | eof {
+			if (!required) return 0;
+			throw std::invalid_argument("missing operand");
+		}
+
+		number_prefix {
+			return x_number_operand(iter);
+		}
+
+		ident_prefix { return x_label_operand(iter); }
+	*/
+
+}
+
+static uint32_t type_operand(const char *YYCURSOR, bool required = true) {
+
+	const char *iter = YYCURSOR;
+	const char *YYMARKER = nullptr;
+	uint32_t rv = 0;
+	/*!re2c
+		* { throw std::invalid_argument("bad operand"); }
+
+		[;*] | eof {
+			if (!required) return rv;
+			throw std::invalid_argument("missing operand");
+		}
+		number_prefix { return x_number_operand(iter); }
+
+		[A-Za-z][A-Za-z0-9]{2} {
+			std::string s(iter, YYCURSOR);
+			for(char &c : s) c = std::toupper(c);
+			auto iter = types.find(s);
+			if (iter == types.end()) {
+				throw std::invalid_argument("bad operand");
+			}
+			rv = iter->second;
+			goto exit;
+		}
+	*/
+exit:
+	char c = *YYCURSOR;
+	if (isspace(c) || c == 0) return rv;
+
+	throw std::invalid_argument("bad operand");
+}
+
+
+
 static int ovr_operand(const char *YYCURSOR) {
 	int rv = 0;
 	const char *YYMARKER = nullptr;
@@ -312,7 +260,7 @@ static int ovr_operand(const char *YYCURSOR) {
 static std::string label_operand(const char *YYCURSOR, bool required = true) {
 	std::string rv;
 	const char *iter = YYCURSOR;
-	const char *YYMARKER = nullptr;
+	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 		[;*] | eof {
@@ -336,7 +284,7 @@ exit:
 static std::string path_operand(const char *YYCURSOR, bool required = true) {
 	std::string rv;
 	const char *iter = YYCURSOR;
-	const char *YYMARKER = nullptr;
+	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 		[;*] | eof {
@@ -375,7 +323,7 @@ static std::string string_operand(const char *YYCURSOR, bool required = true) {
 
 	std::string rv;
 	const char *iter = YYCURSOR;
-	const char *YYMARKER = nullptr;
+	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 		[;*] | eof {

@@ -93,18 +93,7 @@ static void add_define(std::string str) {
 	}
 
 
-	symbol *e = find_symbol(str);
-	if (e->defined && e->absolute && e->value == value) return;
-
-	if (e->defined) {
-		warnx("%s previously defined", str.c_str());
-		return;
-	}
-
-	e->defined = true;
-	e->absolute = true;
-	e->file = "-D";
-	e->value = value;
+	define(str, value, LBL_D);
 }
 
 /* .ends_with() is c++20 */
