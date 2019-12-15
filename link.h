@@ -36,6 +36,8 @@ c = command file
 	POS		n	y	n
 	LEN		n	y	n
 
+	EXT		n	n	y << imports from linker to command
+
 */
 enum {
 	LBL_EQU = (1 << 0),
@@ -45,6 +47,8 @@ enum {
 	LBL_EQ  = (1 << 2),
 	LBL_POS = (1 << 1),
 	LBL_LEN = (1 << 1),
+
+	LBL_EXT = (1 << 2)
 };
 
 void process_script(const char *argv);

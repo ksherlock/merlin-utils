@@ -932,6 +932,18 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			define(label, number_operand(cursor, local_symbol_table), LBL_GEQ);
 			break;
 
+		case OP_EXT: {
+			/* no label is a no-op. */
+			if (label.empty()) break;
+
+			/* otherwise, it imports an absolute label into the local symbol table */
+			auto e = find_symbol(label, false);
+			if (!e || !e->absolute) throw std::runtime_error("Bad address");
+			define(label, e->value, LBL_EXT);
+
+			break;
+		}
+
 		case OP_SEG: {
 			/* OMF object file linker - set the object file seg name */
 			std::string name = label_operand(cursor);
