@@ -224,7 +224,14 @@ void define(std::string name, uint32_t value, int type) {
 
 }
 
-void new_segment(void) {
+void new_segment(bool reset = false) {
+
+	if (reset) {
+		segments.clear();
+		relocations.clear();
+		save_file.clear();
+	}
+
 	segments.emplace_back();
 	relocations.emplace_back();
 
@@ -550,6 +557,7 @@ static void resolve(void) {
 	}
 }
 
+
 static void print_symbols2(void) {
 
 	for (const auto &e : symbol_table) {
@@ -630,6 +638,13 @@ static bool op_after_end(opcode_t op) {
 	switch(op) {
 		case OP_END:
 		case OP_CMD:
+		case OP_PFX:
+		case OP_DAT:
+		case OP_RES:
+		case OP_RID:
+		case OP_RTY:
+		case OP_RAT:
+		case OP_FIL:
 			return true;
 		default:
 			return false;
@@ -859,10 +874,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			if (lkv == 0 || lkv == 1) {
 				finish();
 				// reset.  could have another link afterwards.
-				segments.clear();
-				relocations.clear();
-				save_file.clear();
-				new_segment();
+				new_segment(true);
 			}
 			if (lkv == 2) {
 				/* add a new segment */
