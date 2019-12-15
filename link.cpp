@@ -8,17 +8,13 @@
 #include <utility>
 #include <vector>
 
-/* old version of stdlib have this stuff in utility */
-#if __has_include(<charconv>)
-#define HAVE_CHARCONV
-#include <charconv>
-#endif
 
 #include <cassert>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
 #include <err.h>
 #include <sysexits.h>
@@ -31,6 +27,8 @@
 
 #include "omf.h"
 #include "rel.h"
+#include "link.h"
+#include "script.h"
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
 int set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type, std::error_code &ec);
@@ -40,35 +38,148 @@ void set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_typ
 typedef std::basic_string_view<uint8_t> byte_view;
 
 
-struct symbol {
-	std::string name;
-	std::string file;
-	uint32_t value = 0;
-	unsigned id = 0;
-	unsigned count = 0;
-
-	bool absolute = false;
-	bool defined = false;
-};
-
-
-std::unordered_map<std::string, unsigned> symbol_map;
-std::vector<symbol> symbol_table;
 
 struct pending_reloc : public omf::reloc {
 	unsigned id = 0;
 };
 
-std::vector<pending_reloc> relocations;
 
 
-std::vector<omf::segment> segments;
+struct cookie {
+	std::string file;
+	std::vector<unsigned> remap;
+
+	uint32_t begin = 0;
+	uint32_t end = 0;
+};
+
+
+namespace {
+
+
+	std::unordered_map<std::string, unsigned> symbol_map;
+	std::vector<symbol> symbol_table;
+
+	std::vector<omf::segment> segments;
+	std::vector<std::vector<pending_reloc>> relocations;
+
+	std::unordered_map<std::string, uint32_t> file_types = {
+
+		{ "NON", 0x00 },
+		{ "BAD", 0x01 },
+		{ "BIN", 0x06 },
+		{ "TXT", 0x04 },
+		{ "DIR", 0x0f },
+		{ "ADB", 0x19 },
+		{ "AWP", 0x1a },
+		{ "ASP", 0x1b },
+		{ "GSB", 0xab },
+		{ "TDF", 0xac },
+		{ "BDF", 0xad },
+		{ "SRC", 0xb0 },
+		{ "OBJ", 0xb1 },
+		{ "LIB", 0xb2 },
+		{ "S16", 0xb3 },
+		{ "RTL", 0xb4 },
+		{ "EXE", 0xb5 },
+		{ "PIF", 0xb6 },
+		{ "TIF", 0xb7 },
+		{ "NDA", 0xb8 },
+		{ "CDA", 0xb9 },
+		{ "TOL", 0xba },
+		{ "DRV", 0xbb },
+		{ "DOC", 0xbf },
+		{ "PNT", 0xc0 },
+		{ "PIC", 0xc1 },
+		{ "FON", 0xcb },
+		{ "PAS", 0xef },
+		{ "CMD", 0xf0 },
+		{ "LNK", 0xf8 },
+		{ "BAS", 0xfc },
+		{ "VAR", 0xfd },
+		{ "REL", 0xfe },
+		{ "SYS", 0xff },
+
+	};
+
+}
+
+
+/*
+ Variable types:
+
+	linker symbol table includes =, EQU, GEQ, and KBD
+
+
+	GEQ - global absolute label, in effect for all subsequent asms.
+	inhibits KBD, otherwise causes duplicate symbol errors during assembly.
+
+	KBD - same as GEQ
+
+	EQU - same as GEQ BUT symbol is discarded after ASM (ie, only in effect for 1 assembly)
+
+	=  - internal to link script (DO, etc). not passed to assembler. not passed to linker.
+
+
+	POS - current offset
+	LEN - length of last linked file
+
+a = assembler
+l = linker
+c = command file
+
+			a	l	c
+	EQU		y	n	n
+	=		n	n	y
+	GEQ		y	y	y
+	KBD		y	y	y
+	POS		n	y	n
+	LEN		n	y	n
+
+seems like it might be nice for POS and LEN to be available in the command file, eg
+
+	POS xxx
+	DO xxx>4096
+	ERR too big
+	ELS
+	DS 4096-xxx
+	FIN
+
+ */
+
+
+namespace {
+	/* script related */
+
+	unsigned lkv = 1;
+	unsigned ver = 2;
+	unsigned ftype = 0xb3;
+	unsigned atype = 0x0000;
+	unsigned kind = 0x0000;
+	unsigned sav = 0;
+	unsigned lnk = 0;
+	bool end = false;
+	bool fas = false;
+	int ovr = OVR_OFF;
+
+	size_t pos_offset = 0;
+	size_t len_offset = 0;
+
+	/* do/els/fin stuff */
+	uint32_t active_bits = 1;
+	bool active = true;
+
+	std::unordered_map<std::string, uint32_t> local_symbol_table; 
+
+}
+
 
 /* nb - pointer may be invalidated by next call */
-symbol *find_symbol(const std::string &name) {
+symbol *find_symbol(const std::string &name, bool insert) {
 	
 	auto iter = symbol_map.find(name);
 	if (iter != symbol_map.end()) return &symbol_table[iter->second];
+	if (!insert) return nullptr;
 
 	unsigned id = symbol_table.size();
 	symbol_map.emplace(name, id);
@@ -79,18 +190,39 @@ symbol *find_symbol(const std::string &name) {
 	return &rv;
 }
 
+void define(std::string name, uint32_t value, int type) {
+
+	bool warn = false;
+	if (type & 4) {
+		/* command script */
+		auto iter = local_symbol_table.find(name);
+		if (iter == local_symbol_table.end()) {
+			local_symbol_table.emplace(std::make_pair(name, value));
+		} else if (iter->second != value) {
+			warn = true;
+		}
+	}
+	if (type & 2) {
+		/* linker */
+		auto e = find_symbol(name, true);
+		if (e->defined) {
+			if (!e->absolute || e->value != value) {
+				warn = true;
+			}
+		} else {
+			e->absolute = true;
+			e->defined = true;
+			e->file = "-D";
+			e->value = value;
+		}
+	}
+	if (warn) warnx("duplicate symbol %s", name.c_str());
+
+}
 
 
-struct cookie {
-	std::string file;
-	std::vector<unsigned> remap;
-	//std::vector<std::pair<unsigned, unsigned>> zero;
 
-	uint32_t begin = 0;
-	uint32_t end = 0;
-};
-
-void process_labels(byte_view &data, cookie &cookie) {
+static void process_labels(byte_view &data, cookie &cookie) {
 
 	for(;;) {
 		assert(data.size());
@@ -128,6 +260,7 @@ void process_labels(byte_view &data, cookie &cookie) {
 				}
 				e->defined = true;
 				e->file = cookie.file;
+				e->segment = segments.size() - 1; /* 1-based */
 				if (flag & SYMBOL_ABSOLUTE) {
 					e->absolute = true;
 					e->value = value;
@@ -144,9 +277,10 @@ void process_labels(byte_view &data, cookie &cookie) {
 }
 
 
-void process_reloc(byte_view &data, cookie &cookie) {
+static void process_reloc(byte_view &data, cookie &cookie) {
 
 	auto &seg = segments.back();
+	auto &pending = relocations.back();
 
 	for(;;) {
 		assert(data.size());
@@ -236,7 +370,7 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			r.shift = shift;
 
 			symbol_table[r.id].count += 1;
-			relocations.emplace_back(r);
+			pending.emplace_back(r);
 		} else {
 			omf::reloc r;
 			r.size = size;
@@ -247,28 +381,15 @@ void process_reloc(byte_view &data, cookie &cookie) {
 			seg.relocs.emplace_back(r);
 		}
 		/* clear out the inline relocation data */
-		for(unsigned i = 0; i < size; ++i) {
+		for (unsigned i = 0; i < size; ++i) {
 			seg.data[offset + i] = 0;
 		}
 		//cookie.zero.emplace_back(std::make_pair(offset, size));
 	}
 }
 
-/*
-void add_libraries() {
-	auto iter = libs.begin();
-	auto end = libs.end();
 
-	for(;;) {
-
-
-
-	}
-}
-*/
-
-
-void process_unit(const std::string &path) {
+static void process_unit(const std::string &path) {
 
 	cookie cookie;
 	/* skip over relocs, do symbols first */
@@ -298,7 +419,7 @@ void process_unit(const std::string &path) {
 		errx(1, "Invalid aux type %s", path.c_str());
 	}
 
-	omf::segment &seg = segments.back();
+	auto &seg = segments.back();
 
 	cookie.begin = seg.data.size();
 	cookie.end = cookie.begin + offset;
@@ -324,47 +445,99 @@ void process_unit(const std::string &path) {
 
 	/* now relocations */
 	process_reloc(rr, cookie);
+
+	// LEN support
+	len_offset = offset;
 }
 
+static void import(const std::string &path, const std::string &name) {
 
-void resolve(void) {
+	std::error_code ec;
+	mapped_file mf(path, mapped_file::readonly, ec);
+	if (ec) {
+		errx(1, "Unable to open %s: %s", path.c_str(), ec.message().c_str());
+	}
 
-	/* this needs to be updated if supporting multiple segments */
 	auto &seg = segments.back();
 
-	for (auto &r : relocations) {
-		assert(r.id < symbol_map.size());
-		const auto &e = symbol_table[r.id];
-
-		/* if this is an absolute value, do the math */
-		if (!e.defined) {
-			warnx("%s is not defined", e.name.c_str());
-			continue;
-		}
-
-		if (e.absolute) {
-			uint32_t value = e.value + r.value;
-			/* shift is a uint8_t so negating doesn't work right */
-			value >>= -(int8_t)r.shift;
-
-			unsigned offset = r.offset;
-			unsigned size = r.size;
-			while (size--) {
-				seg.data[offset++] = value & 0xff;
-				value >>= 8;
-			}
-			continue;
-		}
-
-		r.value += e.value;
-		seg.relocs.emplace_back(r);
+	// check for duplicate label.
+	auto e = find_symbol(name);
+	if (e->defined) {
+		warnx("Duplicate symbol %s", name.c_str());
+		return;
 	}
-	relocations.clear();
 
-	/* sort them */
-	std::sort(seg.relocs.begin(), seg.relocs.end(), [](const omf::reloc &a, const omf::reloc &b){
-		return a.offset < b.offset;
-	});
+	e->file = path;
+	e->defined = true;
+	e->value = seg.data.size();
+	e->segment = segments.size()-1;
+
+	seg.data.insert(seg.data.end(), mf.data(), mf.data() + mf.size());
+
+	// LEN support
+	len_offset = mf.size();
+}
+
+static void resolve(void) {
+
+	for (unsigned seg_num = 0; seg_num < segments.size(); ++seg_num) {
+
+		auto &seg = segments[seg_num];
+		auto &pending = relocations[seg_num];
+
+		seg.segnum = seg_num + 1;
+
+		for (auto &r : pending) {
+			assert(r.id < symbol_map.size());
+			const auto &e = symbol_table[r.id];
+
+			/* if this is an absolute value, do the math */
+			if (!e.defined) {
+				warnx("%s is not defined", e.name.c_str());
+				continue;
+			}
+
+			if (e.absolute) {
+				uint32_t value = e.value + r.value;
+				/* shift is a uint8_t so negating doesn't work right */
+				value >>= -(int8_t)r.shift;
+
+				unsigned offset = r.offset;
+				unsigned size = r.size;
+				while (size--) {
+					seg.data[offset++] = value & 0xff;
+					value >>= 8;
+				}
+				continue;
+			}
+
+			/* e.segment is 0-based */
+			if (e.segment == seg_num) {
+				r.value += e.value;
+				seg.relocs.emplace_back(r);
+				continue;
+			}
+
+			omf::interseg inter;
+			inter.size = r.size;
+			inter.shift = r.shift;
+			inter.offset = r.offset;
+			inter.segment = e.segment + 1; /* 1-based */
+			inter.segment_offset = r.value + e.value;
+
+			seg.intersegs.emplace_back(inter);
+		}
+		pending.clear();
+
+		/* sort them */
+		std::sort(seg.relocs.begin(), seg.relocs.end(), [](const auto &a, const auto &b){
+			return a.offset < b.offset;
+		});
+
+		std::sort(seg.intersegs.begin(), seg.intersegs.end(), [](const auto &a, const auto &b){
+			return a.offset < b.offset;
+		});
+	}
 }
 
 static void print_symbols2(void) {
@@ -377,7 +550,7 @@ static void print_symbols2(void) {
 	}	
 }
 
-void print_symbols(void) { 
+static void print_symbols(void) { 
 
 	if (symbol_table.empty()) return;
 
@@ -404,113 +577,420 @@ void print_symbols(void) {
 
 
 
-void usage(int ex) {
 
-	fputs("merlin-link [-o outfile] infile...\n", stderr);
-	exit(ex);
-}
+void finish(void) {
 
-/* older std libraries lack charconv and std::from_chars */
-bool parse_number(const char *begin, const char *end, uint32_t &value, int base = 10) {
+	resolve();
+	print_symbols();
 
-#if defined(HAVE_CHARCONV)
-	auto r =  std::from_chars(begin, end, value, base);
-	if (r.ec != std::errc() || r.ptr != end) return false;
-#else
-	auto xerrno = errno;
-	errno = 0;
-	char *ptr = nullptr;
-	value = std::strtoul(begin, &ptr, base);
-	std::swap(errno, xerrno);
-	if (xerrno || ptr != end) {
-		return false;
+	if (save_file.empty()) save_file = "gs.out";
+	try {
+		save_omf(save_file, segments, compress, express);
+		set_file_type(save_file, ftype, atype);
+	} catch (std::exception &ex) {
+		errx(EX_OSERR, "%s: %s", save_file.c_str(), ex.what());
 	}
-#endif
 
-	return true;
 }
 
-static void add_define(std::string str) {
-	/* -D key[=value]
- 		value = 0x, $, % or base 10 */
 
-	uint32_t value = 0;
+static bool op_needs_label(opcode_t op) {
+	switch (op) {
+		case OP_KBD:
+		case OP_EQ:
+		case OP_EQU:
+		case OP_GEQ:
+			return true;
+		default:
+			return false;
+	}
+}
 
-	auto ix = str.find('=');
-	if (ix == 0) usage(EX_USAGE);
-	if (ix == str.npos) {
-		value = 1;
-	} else {
+static bool op_after_end(opcode_t op) {
+	switch(op) {
+		case OP_END:
+		case OP_CMD:
+			return true;
+		default:
+			return false;
+	}
+}
 
-		int base = 10;
-		auto pos = ++ix;
 
-		char c = str[pos]; /* returns 0 if == size */
+extern uint32_t number_operand(const char *cursor, int flags = OP_REQUIRED);
+extern uint32_t number_operand(const char *cursor, const std::unordered_map<std::string, uint32_t> &, int flags = OP_REQUIRED);
+extern int ovr_operand(const char *cursor);
+extern std::string label_operand(const char *cursor, int flags = OP_REQUIRED);
+extern std::string string_operand(const char *cursor, int flags = OP_REQUIRED);
+extern std::string path_operand(const char *cursor, int flags = OP_REQUIRED);
 
-		switch(c) {
-			case '%':
-				base = 2; ++pos; break;
-			case '$':
-				base = 16; ++pos; break;
-			case '0':
-				c = str[pos+1];
-				if (c == 'x' || c == 'X') {
-					base = 16; pos += 2;					
-				}
-				break;
+extern void no_operand(const char *cursor);
+
+static std::string basename(const std::string &str) {
+
+	auto ix = str.find_last_of("/:");
+	if (ix == str.npos) return str;
+	return str.substr(0, ix);
+}
+
+/* fixup GS/OS strings. */
+static void fix_path(std::string &s) {
+	for (char &c : s)
+		if (c == ':') c = '/';
+}
+
+/*
+ SEG name -> undocumented? command to set the OMF segment name (linker 3 only)
+
+ */
+void evaluate(label_t label, opcode_t opcode, const char *cursor) {
+
+	// todo - should move operand parsing to here.
+
+	switch(opcode) {
+		case OP_DO:
+			if (active_bits & 0x80000000) throw std::runtime_error("too much do do");
+			active_bits <<= 1;
+			if (active) {
+				uint32_t value = number_operand(cursor, local_symbol_table);
+				active_bits |= value ? 1 : 0;
+				active = (active_bits & (active_bits + 1)) == 0;
+			}
+			return;
+			break;
+
+		case OP_ELS:
+			if (active_bits < 2)
+				throw std::runtime_error("els without do");
+
+			active_bits ^= 0x01;
+			active = (active_bits & (active_bits + 1)) == 0;
+			return;
+			break;
+
+		case OP_FIN:
+			active_bits >>= 1;
+			if (!active_bits) {
+				active = 1;
+				throw std::runtime_error("fin without do");
+			}
+			active = (active_bits & (active_bits + 1)) == 0;
+			return;
+			break;
+		default:
+			break;
+	}
+	if (!active) return;
+
+	if (label.empty() && op_needs_label(opcode))
+			throw std::runtime_error("Bad label");
+
+	if (end && !op_after_end(opcode)) return;
+
+	switch(opcode) {
+
+		case OP_END:
+			if (!end && lkv == 2) {
+				/* finish up */
+				segments.pop_back();
+				relocations.pop_back();
+				if (!segments.empty())
+					finish();
+			}
+			end = true;
+			break;
+
+		case OP_DAT: {
+			/* 29-DEC-88   4:18:37 PM */
+			time_t t = time(nullptr);
+			struct tm *tm = localtime(&t);
+			char buffer[32];
+
+			strftime(buffer, sizeof(buffer), "%d-%b-%y  %l:%M:%S %p", tm);
+			for (char &c : buffer) c = std::toupper(c);
+
+			fprintf(stdout, "%s\n", buffer);
+			break;
 		}
-		if (!parse_number(str.data() + pos, str.data() + str.length(), value, base))
-			usage(EX_USAGE);
 
-		str.resize(ix-1);
+		case OP_PFX: {
+
+			std::string path = path_operand(cursor);
+			fix_path(path);
+
+			int ok = chdir(path.c_str());
+			if (ok < 0)
+				warn("PFX %s", path.c_str());
+			break;
+		}
+
+
+		case OP_TYP:
+			ftype = number_operand(cursor, file_types, OP_REQUIRED | OP_INSENSITIVE);
+			break;
+		case OP_ADR:
+			atype = number_operand(cursor, local_symbol_table);
+			break;
+		case OP_KND: {
+			uint32_t kind = number_operand(cursor, local_symbol_table);
+			if (!segments.empty())
+				segments.back().kind = kind;
+			break;
+		}
+		case OP_ALI: {
+			uint32_t align = number_operand(cursor, local_symbol_table);
+			// must be power of 2 or 0
+			if ((align & (align-1)) == 0) {
+				// not yet supported.
+			} else {
+				throw std::runtime_error("Bad alignment");
+			}
+			break;
+		}
+
+
+		case OP_LKV: {
+			/* specify linker version */
+			/* 0 = binary, 1 = Linker.GS, 2 = Linker.XL, 3 = convert to OMF object file */
+
+			uint32_t value = number_operand(cursor, local_symbol_table);
+			switch (value) {
+				case 0: throw std::runtime_error("binary linker not supported");
+				case 3: throw std::runtime_error("object file linker not supported");
+				case 1:
+				case 2:
+					lkv = value;
+					break;
+				default:
+					throw std::runtime_error("bad linker version");
+			}
+			break;
+		}
+
+		case OP_VER: {
+			/* OMF version, 1 or 2 */
+			uint32_t value = number_operand(cursor, local_symbol_table);
+
+			if (value != 2)
+				throw std::runtime_error("bad OMF version");
+			ver = value;
+			break;
+		}
+
+		case OP_LNK: {
+			if (end) throw std::runtime_error("link after end");
+
+			std::string path = path_operand(cursor);
+			process_unit(path);
+			++lnk;
+			break;
+		}
+
+		case OP_IMP: {
+
+			/* qasm addition. import binary file. entry name is filename w/ . converted to _ */
+			std::string path = path_operand(cursor);
+			std::string name = basename(path);
+			for (char &c : name) {
+				c = std::isalnum(c) ? std::toupper(c) : '_';
+			}
+			import(path, name);
+			++lnk;
+			break;
+		}
+
+		case OP_SAV: {
+			if (end) throw std::runtime_error("save after end");
+
+			std::string path = path_operand(cursor);
+
+			/* use 1st SAV as the path */
+			if (save_file.empty()) save_file = path;
+
+			/*
+				lkv 0 = binary linker (unsupported)
+				lkv 1 = 1 segment GS linker
+				lkv 2 = multi-segment GS linker
+				lkv 3 = convert REL to OMF object file (unsupported)
+			 */
+
+			if (lkv == 1 || lkv == 2 || lkv == 3) {
+				auto &seg = segments.back();
+				std::string base = basename(path);
+				/* merlin link uses a 10-char fixed label */
+				//base.resize(10, ' ');
+				seg.segname = base;
+				seg.loadname = base;
+				// seg.kind = kind;
+			}
+			if (lkv == 1) {
+				finish();
+				end = true;
+			}
+			if (lkv == 2) {
+				/* add a new segment */
+				segments.emplace_back();
+				relocations.emplace_back();
+				pos_offset = 0; // POS support
+			}
+			++sav;
+			break;
+		}
+
+		case OP_KBD: {
+			char buffer[256];
+
+			if (!isatty(STDIN_FILENO)) return;
+
+			/* todo if already defined (via -D) don't prompt */
+			if (local_symbol_table.find(label) != local_symbol_table.end())
+				return;
+
+			std::string prompt = string_operand(cursor, OP_OPTIONAL);
+
+			if (prompt.empty()) prompt = "Give value for " + label;
+			prompt += ": ";
+			fputs(prompt.c_str(), stdout);
+			fflush(stdout);
+
+			char *cp = fgets(buffer, sizeof(buffer), stdin);
+
+			if (!cp) throw std::runtime_error("Bad input");
+
+			uint32_t value = number_operand(cp, local_symbol_table, true);
+
+			define(label, value, LBL_KBD);
+			break;
+		}
+
+		case OP_POS: {
+			// POS label << sets label = current segment offset
+			// POS  << resets pos byte counter.
+
+			std::string label = label_operand(cursor, OP_OPTIONAL);
+			if (label.empty()) {
+				pos_offset = segments.back().data.size();
+			} else {
+				uint32_t value = segments.back().data.size() - pos_offset;
+
+				define(label, value, LBL_POS);
+			}
+			break;
+		}
+		case OP_LEN: {
+			// LEN label
+			// sets label = length of most recent file linked
+
+			std::string label = label_operand(cursor);
+			uint32_t value = len_offset;
+			define(label, value, LBL_LEN);
+			break;
+		}
+
+		case OP_EQ:
+			define(label, number_operand(cursor, local_symbol_table), LBL_EQ);
+			break;
+		case OP_EQU:
+			define(label, number_operand(cursor, local_symbol_table), LBL_EQU);
+			break;
+		case OP_GEQ:
+			define(label, number_operand(cursor, local_symbol_table), LBL_GEQ);
+			break;
+
+		case OP_SEG: {
+			/* OMF object file linker - set the object file seg name */
+			std::string name = label_operand(cursor);
+			break;
+		}
+
+		case OP_FAS:
+			/* fast linker, only 1 file allowed */
+			fas = true;
+			break;
+
+		case OP_OVR:
+			ovr = ovr_operand(cursor);
+			break;
+
+		case OP_PUT: {
+			std::string path = path_operand(cursor);
+			break;
+		}
+		case OP_IF: {
+			std::string path = path_operand(cursor);
+			break;
+		}
+
+		case OP_ASM: {
+			std::string path = path_operand(cursor);
+			break;			
+		}
+		default:
+			throw std::runtime_error("opcode not yet supported");		
 	}
 
-
-	symbol *e = find_symbol(str);
-	if (e->defined && e->absolute && e->value == value) return;
-
-	if (e->defined) {
-		warnx("%s previously defined", str.c_str());
-		return;
-	}
-
-	e->defined = true;
-	e->absolute = true;
-	e->file = "-D";
-	e->value = value;
 }
 
+void process_script(const char *path) {
 
-int main(int argc, char **argv) {
+	extern void parse_line(const char *);
 
-	int c;
-	std::string gs_out = "gs.out";
-	bool express = true;
-	bool compress = true;
+	FILE *fp = nullptr;
 
-
-	while ((c = getopt(argc, argv, "o:D:XC")) != -1) {
-		switch(c) {
-			case 'o':
-				gs_out = optarg;
-				break;
-			case 'X': express = false; break;
-			case 'C': compress = false; break;
-			case 'D': add_define(optarg); break;
-			case ':':
-			case '?':
-			default:
-				usage(EX_USAGE);
-				break;
+	if (!path || !strcmp(path, "-")) fp = stdin;
+	else {
+		fp = fopen(path, "r");
+		if (!fp) {
+			err(1, "Unable to open %s", path);
 		}
 	}
 
-	argv += optind;
-	argc -= optind;
-
-	if (!argc) usage(EX_USAGE);
 
 	segments.emplace_back();
+	relocations.emplace_back();
+
+	int no = 1;
+	int errors = 0;
+	char *line = NULL;
+	size_t cap = 0;
+	for(;; ++no) {
+
+		ssize_t len = getline(&line, &cap, fp);
+		if (len == 0) break;
+		if (len < 0) break;
+
+		/* strip trailing ws */
+		while (len && isspace(line[len-1])) --len;
+		line[len] = 0;
+		if (len == 0) continue; 
+
+		try {
+			parse_line(line);
+		} catch (std::exception &ex) {
+			if (!active) continue;
+
+			fprintf(stderr, "%s in line: %d\n", ex.what(), no);
+			fprintf(stderr, "%s\n", line);
+			if (++errors >= 10) {
+				fputs("Too many errors, aborting\n", stderr);
+				break;
+			}
+		}
+	}
+	if (fp != stdin)
+		fclose(fp);
+	free(line);
+	exit(errors ? EX_DATAERR : 0);
+}
+
+
+
+
+void process_files(int argc, char **argv) {
+
+	segments.emplace_back();
+	relocations.emplace_back();
+
 	for (int i = 0; i < argc; ++i) {
 		char *path = argv[i];
 		try {
@@ -519,15 +999,7 @@ int main(int argc, char **argv) {
 			errx(EX_DATAERR, "%s: %s", path, ex.what());
 		}
 	}
-
-	resolve();
-	print_symbols();
-
-	try {
-		save_omf(gs_out, segments, compress, express);
-		set_file_type(gs_out, 0xb3, 0x0000);
-		exit(0);
-	} catch (std::exception &ex) {
-		errx(EX_OSERR, "%s: %s", gs_out.c_str(), ex.what());
-	}
+	finish();
+	exit(0);
 }
+

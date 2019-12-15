@@ -1,13 +1,19 @@
 dist: bionic
 osx_image: xcode10
 language: cpp
+
+addons:
+  apt:
+    packages: re2c
+  homebrew:
+    packages: re2c
+
 os:
   - osx
   - linux
+
 compiler:
   - clang
   - gcc
  
 script: make all
-
-

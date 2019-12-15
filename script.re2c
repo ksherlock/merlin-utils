@@ -18,6 +18,8 @@
 
 #include <err.h>
 
+#include "script.h"
+
 
 /*!re2c
     re2c:define:YYCTYPE = char;
@@ -27,185 +29,35 @@
 	ident = [:<-~][0-~]*;
 	ws = [ \t];
 	eof = "\x00";
+
+	number_prefix = [%$0-9];
+	ident_prefix = [:-~];
+	string_prefix = ['"];
 */
 
-enum {
-	CMD_NONE = 0,
-	#define x(op) CMD_##op,
-	#include "ops.h"
-	#undef x
-	CMD_EQ
-};
+namespace {
+	std::unordered_map<std::string, opcode_t> opcodes = {
+		#define x(op) { #op, OP_##op },
 
-static std::unordered_map<std::string, int> commands = {
-	#define x(op) { #op, CMD_##op },
+		#include "ops.h"
+		#undef x
 
-	#include "ops.h"
-	#undef x
+		/* aliases */
+		{ "AUX", OP_ADR },
+		{ "REZ", OP_RES },
+		{ "LIN", OP_LNK },
+		{ "KIN", OP_KND },
+		{ "=",   OP_EQ }
+	};
 
-	/* aliases */
-	{ "AUX", CMD_ADR },
-	{ "REZ", CMD_RES },
-	{ "LIN", CMD_LNK },
-	{ "KIN", CMD_KND },
-	{ "=", CMD_EQ }
-};
-
-
-static std::unordered_map<std::string, int> types = {
-
-	{ "NON", 0x00 },
-	{ "BAD", 0x01 },
-	{ "BIN", 0x06 },
-	{ "TXT", 0x04 },
-	{ "DIR", 0x0f },
-	{ "ADB", 0x19 },
-	{ "AWP", 0x1a },
-	{ "ASP", 0x1b },
-	{ "GSB", 0xab },
-	{ "TDF", 0xac },
-	{ "BDF", 0xad },
-	{ "SRC", 0xb0 },
-	{ "OBJ", 0xb1 },
-	{ "LIB", 0xb2 },
-	{ "S16", 0xb3 },
-	{ "RTL", 0xb4 },
-	{ "EXE", 0xb5 },
-	{ "PIF", 0xb6 },
-	{ "TIF", 0xb7 },
-	{ "NDA", 0xb8 },
-	{ "CDA", 0xb9 },
-	{ "TOL", 0xba },
-	{ "DRV", 0xbb },
-	{ "DOC", 0xbf },
-	{ "PNT", 0xc0 },
-	{ "PIC", 0xc1 },
-	{ "FON", 0xcb },
-	{ "PAS", 0xef },
-	{ "CMD", 0xf0 },
-	{ "LNK", 0xf8 },
-	{ "BAS", 0xfc },
-	{ "VAR", 0xfd },
-	{ "REL", 0xfe },
-	{ "SYS", 0xff },
-
-};
-
-
-
-static uint32_t number_operand(const char *YYCURSOR, bool required = true) {
-
-	char *iter = YYCURSOR;
-	uint32_t rv = 0;
-	/*!re2c
-		* { throw std::invalid_argument("bad operand"); }
-		[;*] | eof {
-			if (!required) return rv;
-			throw std::invalid_argument("missing operand");
-		}
-		'%' [01]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				rv <<= 1;
-				rv |= *iter - '0';
-			}
-			goto exit;		
-		}
-
-		'$' [A-Fa-f0-9]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				char c = *iter | 0x20;
-				rv <<= 4;
-				if (c <= '9') rv |= c - '0';
-				else rv |= c - 'a' + 10;
-			}
-			goto exit;		
-		}
-
-		[0-9]+ {
-			for(;iter < YYCURSOR; ++iter) {
-				rv *= 10;
-				rv += *iter - '0';
-			}
-			goto exit;		
-	
-		}
-
-		ident {
-			std::string s(iter, YYCURSOR);
-			//look up symbol, verify it's an absolute value, etc
-		}
-	*/
-exit:
-	char c = *YYCURSOR;
-	if (isspace(c) || c == 0) return rv;
-
-	throw std::invalid_argument("bad operand");
 }
 
-static uint32_t type_operand(const char *YYCURSOR, bool required = true) {
-
-	char *iter = YYCURSOR;
-	uint32_t rv = 0;
-	/*!re2c
-		* { throw std::invalid_argument("bad operand"); }
-
-		[;*] | eof {
-			if (!required) return rv;
-			throw std::invalid_argument("missing operand");
-		}
-
-		'%' [01]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				rv <<= 1;
-				rv |= *iter - '0';
-			}
-			goto exit;		
-		}
-
-		'$' [A-Fa-f0-9]+ {
-			++iter;
-			for(;iter < YYCURSOR; ++iter) {
-				char c = *iter | 0x20;
-				rv <<= 4;
-				if (c <= '9') rv |= c - '0';
-				else rv |= c - 'a' + 10;
-			}
-			goto exit;		
-		}
-
-		[0-9]+ {
-			for(;iter < YYCURSOR; ++iter) {
-				rv *= 10;
-				rv += *iter - '0';
-			}
-			goto exit;		
-	
-		}
-
-		[A-Za-z][A-Za-z0-9]{2} {
-			std::string s(iter, YYCURSOR);
-			for(char &c : s) c = std::toupper(c);
-			auto iter = types.find(s);
-			if (iter == types.end) {
-				throw std::invalid_argument("bad operand");
-			}
-			rv = *iter;
-		}
-	*/
-exit:
-	char c = *YYCURSOR;
-	if (isspace(c) || c == 0) return rv;
-
-	throw std::invalid_argument("bad operand");
-}
 
 
 
 static int x_number_operand(const char *YYCURSOR) {
-	char *iter = YYCURSOR;
+	const char *iter = YYCURSOR;
+	// const char *YYMARKER = nullptr;
 	uint32_t rv = 0;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
@@ -246,25 +98,31 @@ exit:
 	throw std::invalid_argument("bad operand");
 }
 
-static std::string x_label_operand(const char *YYCURSOR) {
-	char *iter = YYCURSOR;
+static std::string x_label_operand(const char *YYCURSOR, bool insensitive) {
+	const char *iter = YYCURSOR;
+	// const char *YYMARKER = nullptr;
 	std::string rv;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 
 		ident {
-			std::string s(iter, YYCURSOR);
-			//look up symbol, verify it's an absolute value, etc
+			rv = std::string(iter, YYCURSOR);
+			if (insensitive)
+				for (char &c : rv) rv = std::toupper(c);
+			goto exit;
 		}
 	*/
 exit:
 	char c = *YYCURSOR;
-	if (isspace(c) || c == 0) return rv;
+	if (isspace(c) || c == 0) {
+		//look up symbol, verify it's an absolute value, etc
+		return rv;
+	}
 	throw std::invalid_argument("bad operand");	
 }
 
 static std::string x_string_operand(const char *YYCURSOR) {
-	char *iter = YYCURSOR;
+	const char *iter = YYCURSOR;
 	std::string rv;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
@@ -281,21 +139,46 @@ exit:
 	throw std::invalid_argument("bad operand");	
 }
 
+uint32_t number_operand(const char *YYCURSOR, const std::unordered_map<std::string, uint32_t> &map, int flags) {
+
+	const char *cp = YYCURSOR;
+	// const char *YYMARKER = nullptr;
+	/*!re2c
+		* { throw std::invalid_argument("bad operand"); }
+		[;*] | eof {
+			if (flags & OP_REQUIRED)
+				throw std::invalid_argument("missing operand");
+			return 0;			
+		}
+
+		number_prefix {
+			return x_number_operand(cp);
+		}
+
+		ident_prefix {
+			std::string s = x_label_operand(cp, flags & OP_INSENSITIVE);
+			auto iter = map.find(s);
+			if (iter == map.end()) throw std::runtime_error("Bad symbol");
+			return iter->second;
+		}
+	*/
+}
 
 
-static int ovr_operand(const char *YYCURSOR) {
+int ovr_operand(const char *YYCURSOR) {
 	int rv = 0;
+	const char *YYMARKER = nullptr;
 
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 		[;*] | eof {
-			return 1;
+			return OVR_NONE;
 		}
 		'ALL' {
-			rv = -1;
+			rv = OVR_ALL;
 		}
 		'OFF' {
-			rv = 0;
+			rv = OVR_OFF;
 		}
 	*/
 
@@ -305,102 +188,99 @@ static int ovr_operand(const char *YYCURSOR) {
 	throw std::invalid_argument("bad operand");
 }
 
-static std::string label_operand(const char *YYCURSOR, bool required = true) {
-	std::string rv;
-	char *iter = YYCURSOR;
+std::string label_operand(const char *YYCURSOR, int flags) {
+	const char *cp = YYCURSOR;
+	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 		[;*] | eof {
-			if (!required) return rv;
-			throw std::invalid_argument("missing operand");
+			if (flags & OP_REQUIRED)
+				throw std::invalid_argument("missing operand");
+			return std::string();
 		}
-		ident {
-			rv = std::string(iter, YYCURSOR);
-			goto exit;
+		ident_prefix {
+			return x_label_operand(cp, flags & OP_INSENSITIVE);
 		}
 	*/
-
-	char c = *YYCURSOR;
-	if (isspace(c) || c == 0) return rv;
-
-	throw std::invalid_argument("bad operand");
 }
 
 
-static std::string path_operand(const char *YYCURSOR, bool required = true) {
+std::string path_operand(const char *YYCURSOR, int flags) {
 	std::string rv;
-	char *iter = YYCURSOR;
+	const char *iter = YYCURSOR;
+	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
+
 		[;*] | eof {
-			if (!required) return rv;
-			throw std::invalid_argument("missing operand");
+			if (flags & OP_REQUIRED)
+				throw std::invalid_argument("missing operand");
+			return rv;
 		}
+		string_prefix {
+			return x_string_operand(iter);
+		}
+
 		// don't allow leading quotes, eof, or comment chars
-		[^;*\x00'"][^ \t]* {
+		[^ \t\x00;*'"][^ \t\x00]* {
 			rv = std::string(iter, YYCURSOR);
 			goto exit;
 		}
-		['] [^']* ['] | ["] [^"]* ["] {
-			rv = std::string(iter+1, YYCURSOR-1);
-			goto exit;
-		}
 
 	*/
 
+exit:
 	char c = *YYCURSOR;
 	if (isspace(c) || c == 0) return rv;
 
 	throw std::invalid_argument("bad operand");
 }
 
-
-static void no_operand(const char *YYCURSOR) {
+std::string string_operand(const char *YYCURSOR, int flags) {
+	const char *cp = YYCURSOR;
+	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
-		[;*] | eof { return }
-	*/
-}
 
-
-static std::string string_operand(const char *YYCURSOR, bool required = true) {
-
-	std::string rv;
-	char *iter = YYCURSOR;
-	/*!re2c
-		* { throw std::invalid_argument("bad operand"); }
 		[;*] | eof {
-			if (!required) return rv;
-			throw std::invalid_argument("missing operand");
+			if (flags & OP_REQUIRED)
+				throw std::invalid_argument("missing operand");
+			return std::string();
 		}
-		['] [^']* ['] | ["] [^"]* ["] {
-			rv = std::string(iter+1, YYCURSOR-1);
-			goto exit;
+		string_prefix {
+			return x_string_operand(cp);
 		}
-	*/
 
-	char c = *YYCURSOR;
-	if (isspace(c) || c == 0) return rv;
-	throw std::invalid_argument("bad operand");
+	*/
 }
 
 
 
-static void parse_line(const char *YYCURSOR) {
+void no_operand(const char *YYCURSOR) {
+	/*!re2c
+		* { throw std::invalid_argument("bad operand"); }
+		[;*] | eof { return; }
+	*/
+}
 
-	unsigned cmd = 0;
-	std::string label;
+
+void parse_line(const char *YYCURSOR) {
+
+	label_t label;
+	opcode_t opcode = OP_NONE;
 
 	const char *iter = YYCURSOR;
+	const char *YYMARKER = nullptr;
+
 	/*!re2c
 
-		* { throw std::invalid_argument("bad label") }
+		* { throw std::invalid_argument("bad label"); }
 		[;*] | eof {
 			return;
 		}
-		ws { goto opcode }
+		ws { goto opcode; }
 		ident / (ws|eof) {
-			label(iter, YYCURSOR);
+			label = std::string(iter, YYCURSOR);
 			goto opcode;	
 		}
 
@@ -409,27 +289,26 @@ static void parse_line(const char *YYCURSOR) {
 
 opcode:
 
-
 	while (isspace(*YYCURSOR)) ++YYCURSOR;
 	iter = YYCURSOR;
 
 	/*!re2c
 
 		* { throw std::invalid_argument("bad opcode"); }
-		[;*]|eof { return 0; }
+		[;*]|eof { return; }
 
-		'=' / (ws|eof) { cmd = CMD_EQ; goto operand; }
+		'=' / (ws|eof) { opcode = OP_EQ; goto operand; }
 
 		[A-Za-z]+ / (ws|eof) {
-			size_t = l YYCURSOR - iter;
+			size_t l = YYCURSOR - iter;
 			if (l > 3) l = 3;
 			std::string s(iter, iter + l);
-			for (char &c in s): c = std::toupper(c);
-			auto iter = commands.find(s);
-			if (!iter == commands.end()) {
+			for (char &c : s) c = std::toupper(c);
+			auto iter = opcodes.find(s);
+			if (iter == opcodes.end()) {
 				throw std::invalid_argument("bad opcode");
 			}
-			cmd = *iter;
+			opcode = iter->second;
 			goto operand;
 		}
 	*/
@@ -439,195 +318,10 @@ operand:
 	while (isspace(*YYCURSOR)) ++YYCURSOR;
 	iter = YYCURSOR;
 
-	std::string str_operand;
-	long int_operand;
+	void evaluate(label_t label, opcode_t opcode, const char *);
 
-	switch(cmd) {
-		case CMD_LNK:
-		case CMD_PUT:
-		case CMD_ASM:
-		case CMD_SAV:
-		case CMD_LIB:
-		case CMD_IF:
-		case CMD_PFX:
-		case CMD_IMP:
-		case CMD_RES:
-		case CMD_FIL:
-			str_operand = path_operand(YYCURSOR);
-			break;
-		case CMD_ORG:
-		case CMD_ADR:
-		case CMD_DS:
-		case CMD_KND:
-		case CMD_VER:
-		case CMD_ALI:
-		case CMD_LKV:
-		case CMD_DO:
-		case CMD_EQU:
-		case CMD_EQ:
-		case CMD_GEQ:
-			int_operand = number_operand(YYCURSOR);
-			break;
-		case CMD_TYP:
-			int_operand = type_operand(YYCURSOR);
-			break;
-		case CMD_OVR:
-			int_operand = ovr_operand(YYCURSOR);
-			break;
-		case CMD_POS:
-		case CMD_LEN:
-			str_operand = label_operand(YYCURSOR, false);
-			break;
-		case CMD_KBD:
-			str_operand = string_operand(YYCURSOR, false);
-			break;
-
-		case CMD_CMD:
-			str_operand = string(YYCURSOR);
-			break;
-
-		default:
-			no_operand(YYCURSOR);
-			break;
-	}
-
-	switch(cmd) {
-
-		case CMD_NONE:
-		case CMD_NOL: /* asm: default list off */
-		case CMD_PUT: /* check if source file is outdated */
-		case CMD_OVR: /* override outdated check and force assembly */
-		case CMD_FAS: /* fast linker. only one SAV allowed */
-			/* nop */
-			break;
-
-		case CMD_LNK:
-			/* link file ... */
-			break;
-		case CMD_ORG:
-			/* set the link origin. also used as aux type */
-			break;
-		case CMD_ADR:
-			/* set the file aux type */
-			break;
-
-		case CMD_SAV:
-			/* save linked file. for xl linker, specifies segment name */
-			break;
-
-		case CMD_TYP:
-			/* set the file type */
-			break;
-
-		case CMD_EXT:
-			/* print addresses of all resolved externals (not just errors)
-			   disabled after each SAV
-			 */
-			break;
-		case CMD_ENT:
-			/* print the entry list */
-			/* flag symbol w ? if unused */
-			break;
-		case CMD_DAT:
-			/* print the current date and time */
-			break;
-
-		case CMD_END:
-			/* end of command file (optional) */
-			break;
-
-		case CMD_LIB:
-			/* search directory for unresolved symbols */
-			break;
-
-		case CMD_LKV:
-			/* specify linker version */
-			/* 0 = binary, 1 = Linker.GS, 2 = Linker.XL, 3 = convert to OMF object file */
-			switch (int_operand) {
-				case 0: throw std::runtime_error("binary linker not supported");
-				case 3: throw std::runtime_error("object file linker not supported");
-				case 1:
-				case 2:
-					/* default file type = S16 */
-					break;
-				default:
-					throw std::runtime_error("bad linker version");
-			}
-			break;
-
-		case CMD_VER:
-			/*specify OMF version. 1 or 2 */
-			break;
-
-		case CMD_KND:
-			/* set the OMF kind flag */
-			/* 8-bit for v 1, 16-bit for v2 */
-			break;
-
-		case CMD_ALI:
-			/* OMF align field. default = 0 */
-			break;
-
-		case CMD_DS:
-			/* OMF RESSPC field */
-			break;
-
-
-		case CMD_LEN:
-			/* Puts "LABEL" in symbol dictionary a san ENTry whose value is equal to the number of bytes of the last linked file. */
-			break;
-		case CMD_POS:
-		
-
-
-		case CMD_ASM:
-		default:
-			throw std::runtime_error("opcode not supported");
-	}
-
-
-
+	evaluate(label, opcode, YYCURSOR);
 }
 
-int process_link_file(const std::string &path) {
 
-	FILE *fp;
-	fp = fopen(path, "r");
-	if (!fp) {
-		warn("Unable to open %s", path.c_str());
-		return -1;
-	}
 
-	int no = 1;
-	int errors = 0;
-	const char *line = NULL;
-	size_t cap = 0;
-	for(;; ++no) {
-
-		ssize_t len = getline(&line, &cap, fp);
-		if (len == 0) break;
-		if (len < 0) {
-			warn("read error");
-			++errors;
-			break;
-		}
-		/* strip trailing ws */
-		while (len && isspace(line[len-1])) --len;
-		line[len] = 0;
-		if (len == 0) continue; 
-
-		try {
-			parse_line(line);
-		} catch (std::exception &ex) {
-			fprintf(stderr, "%s in line: %d\n", ex.what(), no);
-			fprintf(stderr, "%s\n", line);
-			if (++errors >= 10) {
-				fputs("Too many errors, aborting\n", stderr);
-				break;
-			}
-		}
-	}
-	fclose(fp);
-	free(line);
-	return errors ? -1 : 0;
-}

@@ -15,7 +15,7 @@ clean:
 o:
 	mkdir o
 
-merlin-link: o/link.o o/mapped_file.o o/omf.o o/set_file_type.o afp/libafp.a
+merlin-link: o/main.o o/link.o o/script.o o/mapped_file.o o/omf.o o/set_file_type.o afp/libafp.a
 	$(LINK.o) $^ $(LDLIBS) -o $@
 
 o/mapped_file.o : mapped_file.cpp mapped_file.h unique_resource.h
