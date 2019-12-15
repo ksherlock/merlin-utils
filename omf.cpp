@@ -204,9 +204,9 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 
 					auto &sr = ss[n];
 					if (!sr) sr.emplace();
+					sr->append(r.offset);
 
 					uint32_t value = r.value;
-					sr->append(r.offset);
 					for (int i = 0; i < 2; ++i, value >>= 8)
 						data[data_offset + r.offset + i] = value; 
 					continue;
@@ -220,9 +220,9 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 
 					auto &sr = ss[n];
 					if (!sr) sr.emplace();
+					sr->append(r.offset);
 
 					uint32_t value = r.value;
-					sr->append(r.offset);
 					for (int i = 0; i < 3; ++i, value >>= 8)
 						data[data_offset + r.offset + i] = value; 
 					continue;	
@@ -234,9 +234,9 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 					int n = SUPER_INTERSEG24 + seg.segnum;
 					auto &sr = ss[n];
 					if (!sr) sr.emplace();
+					sr->append(r.offset);
 
 					uint32_t value = r.value;
-					sr->append(r.offset);
 					for (int i = 0; i < 2; ++i, value >>= 8)
 						data[data_offset + r.offset + i] = value; 
 					continue;
@@ -268,8 +268,10 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 					constexpr int n = SUPER_INTERSEG1;
 					auto &sr = ss[n];
 					if (!sr) sr.emplace();
+					sr->append(r.offset);
 
 					uint32_t value = r.segment_offset;
+
 					data[data_offset + r.offset + 0] = value; value >>= 8;
 					data[data_offset + r.offset + 1] = value; value >>= 8;
 					data[data_offset + r.offset + 2] = r.segment;
@@ -282,9 +284,9 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 					int n = SUPER_INTERSEG12 + r.segment;
 					auto &sr = ss[n];
 					if (!sr) sr.emplace();
+					sr->append(r.offset);
 
 					uint32_t value = r.segment_offset;
-					sr->append(r.offset);
 					for (int i = 0; i < 2; ++i, value >>= 8)
 						data[data_offset + r.offset + i] = value; 
 					continue;
@@ -295,9 +297,9 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 					int n = SUPER_INTERSEG24 + r.segment;
 					auto &sr = ss[n];
 					if (!sr) sr.emplace();
+					sr->append(r.offset);
 
 					uint32_t value = r.segment_offset;
-					sr->append(r.offset);
 					for (int i = 0; i < 2; ++i, value >>= 8)
 						data[data_offset + r.offset + i] = value; 
 					continue;
