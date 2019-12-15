@@ -156,6 +156,8 @@ namespace {
 	unsigned ftype = 0xb3;
 	unsigned atype = 0x0000;
 	unsigned kind = 0x0000;
+	unsigned org = 0x0000;
+
 	unsigned sav = 0;
 	unsigned lnk = 0;
 	bool end = false;
@@ -165,7 +167,7 @@ namespace {
 	size_t pos_offset = 0;
 	size_t len_offset = 0;
 
-	/* do/els/fin stuff */
+	/* do/els/fin stuff.  32 do levels supported. */
 	uint32_t active_bits = 1;
 	bool active = true;
 
@@ -589,14 +591,18 @@ void finish(void) {
 	resolve();
 	print_symbols();
 
-	if (save_file.empty()) save_file = "gs.out";
+	std::string path = save_file;
+
+	if (path.empty()) path = "gs.out";
 	try {
-		save_omf(save_file, segments, compress, express);
-		set_file_type(save_file, ftype, atype);
+		save_omf(path, segments, compress, express);
+		set_file_type(path, ftype, atype);
 	} catch (std::exception &ex) {
-		errx(EX_OSERR, "%s: %s", save_file.c_str(), ex.what());
+		errx(EX_OSERR, "%s: %s", path.c_str(), ex.what());
 	}
 
+	segments.clear();
+	relocations.clear();
 }
 
 
@@ -831,7 +837,11 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			}
 			if (lkv == 1) {
 				finish();
-				end = true;
+				// reset.  could have another link afterwards.
+				segments.clear();
+				relocations.clear();
+				save_file.clear();
+				new_segment();
 			}
 			if (lkv == 2) {
 				/* add a new segment */
