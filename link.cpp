@@ -752,11 +752,17 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 		case OP_ALI: {
 			uint32_t align = number_operand(cursor, local_symbol_table);
 			// must be power of 2 or 0
-			if ((align & (align-1)) == 0) {
-				// not yet supported.
-			} else {
+			if (align & (align-1))
 				throw std::runtime_error("Bad alignment");
-			}
+
+			segments.back().alignment = align;
+			break;
+		}
+
+		case OP_DS: {
+			// todo - how is this handled in binary linker?
+			uint32_t ds = number_operand(cursor, local_symbol_table);
+			segments.back().reserved_space = ds;
 			break;
 		}
 
