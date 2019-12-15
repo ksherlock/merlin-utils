@@ -220,10 +220,19 @@ void define(std::string name, uint32_t value, int type) {
 
 }
 
+void new_segment(void) {
+	segments.emplace_back();
+	relocations.emplace_back();
+
+	segments.back().segnum = segments.size();
+	len_offset = 0;
+	pos_offset = 0;
+}
 
 
 static void process_labels(byte_view &data, cookie &cookie) {
 
+	unsigned segnum = segments.back().segnum;
 	for(;;) {
 		assert(data.size());
 		unsigned flag = data[0];
@@ -260,7 +269,7 @@ static void process_labels(byte_view &data, cookie &cookie) {
 				}
 				e->defined = true;
 				e->file = cookie.file;
-				e->segment = segments.size() - 1; /* 1-based */
+				e->segment = segnum;
 				if (flag & SYMBOL_ABSOLUTE) {
 					e->absolute = true;
 					e->value = value;
@@ -480,12 +489,10 @@ static void import(const std::string &path, const std::string &name) {
 
 static void resolve(void) {
 
-	for (unsigned seg_num = 0; seg_num < segments.size(); ++seg_num) {
+	for (unsigned ix = 0; ix < segments.size(); ++ix) {
 
-		auto &seg = segments[seg_num];
-		auto &pending = relocations[seg_num];
-
-		seg.segnum = seg_num + 1;
+		auto &seg = segments[ix];
+		auto &pending = relocations[ix];
 
 		for (auto &r : pending) {
 			assert(r.id < symbol_map.size());
@@ -511,8 +518,7 @@ static void resolve(void) {
 				continue;
 			}
 
-			/* e.segment is 0-based */
-			if (e.segment == seg_num) {
+			if (e.segment == seg.segnum) {
 				r.value += e.value;
 				seg.relocs.emplace_back(r);
 				continue;
@@ -522,7 +528,7 @@ static void resolve(void) {
 			inter.size = r.size;
 			inter.shift = r.shift;
 			inter.offset = r.offset;
-			inter.segment = e.segment + 1; /* 1-based */
+			inter.segment = e.segment;
 			inter.segment_offset = r.value + e.value;
 
 			seg.intersegs.emplace_back(inter);
@@ -829,9 +835,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			}
 			if (lkv == 2) {
 				/* add a new segment */
-				segments.emplace_back();
-				relocations.emplace_back();
-				pos_offset = 0; // POS support
+				new_segment();
 			}
 			++sav;
 			break;
@@ -946,8 +950,7 @@ void process_script(const char *path) {
 	}
 
 
-	segments.emplace_back();
-	relocations.emplace_back();
+	new_segment();
 
 	int no = 1;
 	int errors = 0;
@@ -988,8 +991,7 @@ void process_script(const char *path) {
 
 void process_files(int argc, char **argv) {
 
-	segments.emplace_back();
-	relocations.emplace_back();
+	new_segment();
 
 	for (int i = 0; i < argc; ++i) {
 		char *path = argv[i];
