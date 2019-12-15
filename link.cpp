@@ -622,6 +622,37 @@ void finish(void) {
 }
 
 
+void lib(const std::string &path) {
+
+	/* for all unresolved symbols, link path/symbol ( no .L extension) */
+
+	std::string p = path;
+	if (!p.empty() && p.back() != '/') p.push_back('/');
+	auto size = p.size();
+
+	/* symbol table might reallocate so can't use for( : ) loop */
+	/* any new dependencies will be appended at the end and processed */
+	for (unsigned i = 0; i < symbol_table.size(); ++i) {
+
+		auto &e = symbol_table[i];
+
+		if (e.absolute || e.defined) continue;
+
+		p.append(e.name);
+
+		/* check the file type... */
+		std::error_code ec;
+		afp::finder_info fi;
+
+		fi.read(path, ec);
+
+		if (ec || fi.prodos_file_type() != 0xf8) continue;
+		process_unit(p);
+		p.resize(size);
+		// assume e is invalid at this point.
+	}
+}
+
 static bool op_needs_label(opcode_t op) {
 	switch (op) {
 		case OP_KBD:
