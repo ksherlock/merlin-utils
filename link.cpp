@@ -31,6 +31,8 @@
 #include "script.h"
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
+void save_bin(const std::string &path, omf::segment &segment, uint32_t org);
+
 int set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type, std::error_code &ec);
 void set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type);
 
@@ -594,8 +596,14 @@ void finish(void) {
 	std::string path = save_file;
 
 	if (path.empty()) path = "gs.out";
+
+
 	try {
-		save_omf(path, segments, compress, express);
+		if (lkv == 0)
+			save_bin(path, segments.back(), org);
+		else
+			save_omf(path, segments, compress, express);
+
 		set_file_type(path, ftype, atype);
 	} catch (std::exception &ex) {
 		errx(EX_OSERR, "%s: %s", path.c_str(), ex.what());
@@ -743,6 +751,12 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 		case OP_ADR:
 			atype = number_operand(cursor, local_symbol_table);
 			break;
+
+		case OP_ORG:
+			org = number_operand(cursor, local_symbol_table);
+			atype = org;
+			break;
+
 		case OP_KND: {
 			uint32_t kind = number_operand(cursor, local_symbol_table);
 			if (!segments.empty())
@@ -773,8 +787,8 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 			uint32_t value = number_operand(cursor, local_symbol_table);
 			switch (value) {
-				case 0: throw std::runtime_error("binary linker not supported");
 				case 3: throw std::runtime_error("object file linker not supported");
+				case 0:
 				case 1:
 				case 2:
 					lkv = value;
@@ -841,7 +855,8 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 				seg.loadname = base;
 				// seg.kind = kind;
 			}
-			if (lkv == 1) {
+
+			if (lkv == 0 || lkv == 1) {
 				finish();
 				// reset.  could have another link afterwards.
 				segments.clear();

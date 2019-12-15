@@ -351,6 +351,38 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 	return reloc_size;
 }
 
+void save_bin(const std::string &path, omf::segment &segment, uint32_t org) {
+
+	int fd;
+	fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+	if (fd < 0) {
+		err(EX_CANTCREAT, "Unable to open %s", path.c_str());
+	}
+
+	auto &data = segment.data;
+
+	for (auto &r : segment.relocs) {
+
+		uint32_t value = r.value + org;
+		value >>= -(int8_t)r.shift;
+
+		unsigned offset = r.offset;
+		unsigned size = r.size;
+		while (size--) {
+			data[offset++] = value & 0xff;
+			value >>= 8;
+		}
+	}
+
+	auto ok = write(fd, data.data(), data.size());
+	if (ok < 0) {
+		close(fd);
+		err(EX_OSERR, "write %s", path.c_str());
+	}
+	close(fd);
+}
+
+
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload) {
 
 	// expressload doesn't support links to other files. 
