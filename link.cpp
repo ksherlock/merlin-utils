@@ -506,6 +506,11 @@ static void resolve(void) {
 		auto &seg = segments[ix];
 		auto &pending = relocations[ix];
 
+
+		if ((seg.kind & 0x0001) == 0x0001 && seg.data.size() > 65535) {
+			throw std::runtime_error("code exceeds bank");
+		}
+
 		for (auto &r : pending) {
 			assert(r.id < symbol_map.size());
 			const auto &e = symbol_table[r.id];
