@@ -13,10 +13,7 @@
 #include <stdexcept>
 
 #include <cctype>
-#include <cstdio>
 #include <cstdint>
-
-#include <err.h>
 
 #include "script.h"
 
@@ -145,7 +142,7 @@ uint32_t number_operand(const char *YYCURSOR, const std::unordered_map<std::stri
 	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
-		[;*] | eof {
+		[;] | eof {
 			if (flags & OP_REQUIRED)
 				throw std::invalid_argument("missing operand");
 			return 0;			
@@ -171,7 +168,7 @@ int ovr_operand(const char *YYCURSOR) {
 
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
-		[;*] | eof {
+		[;] | eof {
 			return OVR_NONE;
 		}
 		'ALL' {
@@ -193,7 +190,7 @@ std::string label_operand(const char *YYCURSOR, int flags) {
 	// const char *YYMARKER = nullptr;
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
-		[;*] | eof {
+		[;] | eof {
 			if (flags & OP_REQUIRED)
 				throw std::invalid_argument("missing operand");
 			return std::string();
@@ -212,7 +209,7 @@ std::string path_operand(const char *YYCURSOR, int flags) {
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 
-		[;*] | eof {
+		[;] | eof {
 			if (flags & OP_REQUIRED)
 				throw std::invalid_argument("missing operand");
 			return rv;
@@ -242,7 +239,7 @@ std::string string_operand(const char *YYCURSOR, int flags) {
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
 
-		[;*] | eof {
+		[;] | eof {
 			if (flags & OP_REQUIRED)
 				throw std::invalid_argument("missing operand");
 			return std::string();
@@ -259,7 +256,7 @@ std::string string_operand(const char *YYCURSOR, int flags) {
 void no_operand(const char *YYCURSOR) {
 	/*!re2c
 		* { throw std::invalid_argument("bad operand"); }
-		[;*] | eof { return; }
+		[;] | eof { return; }
 	*/
 }
 
@@ -295,7 +292,7 @@ opcode:
 	/*!re2c
 
 		* { throw std::invalid_argument("bad opcode"); }
-		[;*]|eof { return; }
+		[;]|eof { return; }
 
 		'=' / (ws|eof) { opcode = OP_EQ; goto operand; }
 
