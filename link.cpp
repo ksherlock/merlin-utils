@@ -157,7 +157,7 @@ namespace {
 	unsigned ver = 2;
 	unsigned ftype = 0xb3;
 	unsigned atype = 0x0000;
-	unsigned kind = 0x0000;
+//	unsigned kind = 0x0000;
 	unsigned org = 0x0000;
 
 	unsigned sav = 0;
@@ -236,6 +236,7 @@ void new_segment(bool reset = false) {
 	relocations.emplace_back();
 
 	segments.back().segnum = segments.size();
+	segments.back().kind = 4096; /* no special memory */
 	len_offset = 0;
 	pos_offset = 0;
 }
