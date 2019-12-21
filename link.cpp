@@ -346,21 +346,21 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 			}
 			data.remove_prefix(4);
 		} else {
-			assert((flag  & ~(0x0f|0x10|0x20|0x80)) == 0);
 
 			// offset already adjusted by start so below comparisons are wrong.
-			switch(flag & (0x80 + 0x20)) {
+			switch(flag & (0x80 | 0x40 | 0x20)) {
 				case 0:
 					size = 1;
-					assert(offset + 0 < cookie.end);
 					break;
 				case 0x20:
 					size = 3;
-					assert(offset + 2 < cookie.end);
+					break;
+				case 0x40:
+					size = 1;
+					shift = -8;
 					break;
 				case 0x80:
 					size = 2;
-					assert(offset + 1 < cookie.end);
 					break;
 				default: /* bad size */
 					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
@@ -368,13 +368,19 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 			}
 			external = flag & 0x10;
 
+			assert(offset + size  <= cookie.end);
 			switch(size) {
 				case 3: value |= seg.data[offset+2] << 16;
 				case 2: value |= seg.data[offset+1] << 8;
 				case 1: value |= seg.data[offset+0];
 			}
 
-
+			if (flag & 0x40) {
+				/* value is already shifted, so need to adjust back */
+				value <<= 8;
+				value -= 0x8000;
+				assert(!external);
+			}
 			if (size > 1) value -= 0x8000;
 
 		}
@@ -415,6 +421,7 @@ static void process_unit(const std::string &path) {
 	cookie cookie;
 	/* skip over relocs, do symbols first */
 
+	if (verbose) printf("Linking %s\n", path.c_str());
 
 	std::error_code ec;
 	mapped_file mf(path, mapped_file::readonly, ec);
