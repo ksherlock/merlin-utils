@@ -573,11 +573,18 @@ static void resolve(void) {
 
 static void print_symbols2(void) {
 
+	size_t len = 8;
+	for (const auto &e : symbol_table) {
+		len = std::max(len, e.name.size());
+	}
+
 	for (const auto &e : symbol_table) {
 		char q = ' ';
 		if (!e.count) q = '?';
 		if (!e.defined) q = '!';
-		fprintf(stdout, "%c %-20s=$%06x\n", q, e.name.c_str(), e.value);
+		uint32_t value = e.value;
+		if (!e.absolute) value += (e.segment << 16);
+		fprintf(stdout, "%c %-*s=$%06x\n", q, (int)len, e.name.c_str(), value);
 	}	
 }
 
@@ -596,10 +603,14 @@ static void print_symbols(void) {
 
 	fputs("\nSymbol table, numerical order:\n", stdout);
 
-	/* numeric */
+	/* numeric, factoring in segment #, absolute first */
 	std::sort(symbol_table.begin(), symbol_table.end(),
 		[](const symbol &a, const symbol &b){
-			return a.value < b.value; 
+			/* absolute have a segment # of 0 so will sort first */
+			auto aa = std::make_pair(a.segment, a.value);
+			auto bb = std::make_pair(b.segment, b.value);
+
+			return aa < bb;
 		});
 
 	print_symbols2();
