@@ -498,7 +498,7 @@ static void import(const std::string &path, const std::string &name) {
 	e->file = path;
 	e->defined = true;
 	e->value = seg.data.size();
-	e->segment = segments.size()-1;
+	e->segment = segments.back().segnum;
 
 	seg.data.insert(seg.data.end(), mf.data(), mf.data() + mf.size());
 
