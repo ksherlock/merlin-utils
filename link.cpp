@@ -614,7 +614,7 @@ static void print_symbols(void) {
 		});
 
 	print_symbols2();
-
+	fputs("\n", stdout);
 }
 
 
@@ -623,13 +623,12 @@ static void print_symbols(void) {
 void finish(void) {
 
 	resolve();
-	print_symbols();
 
 	std::string path = save_file;
 
-	if (path.empty()) path = "gs.out";
+	if (path.empty()) path = "omf.out";
 
-
+	if (verbose) printf("Saving %s\n", path.c_str());
 	try {
 		if (lkv == 0)
 			save_bin(path, segments.back(), org);
@@ -640,6 +639,8 @@ void finish(void) {
 	} catch (std::exception &ex) {
 		errx(EX_OSERR, "%s: %s", path.c_str(), ex.what());
 	}
+
+	print_symbols();
 
 	segments.clear();
 	relocations.clear();
@@ -780,12 +781,14 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 	switch(opcode) {
 
 		case OP_END:
-			if (!end && lkv == 2) {
+			if (lkv == 2) {
 				/* finish up */
 				segments.pop_back();
 				relocations.pop_back();
 				if (!segments.empty())
 					finish();
+				// reset.  could have another link afterwards.
+				new_segment(true);
 			}
 			end = true;
 			break;
@@ -905,6 +908,8 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			if (end) throw std::runtime_error("save after end");
 
 			std::string path = path_operand(cursor);
+			std::string base = basename(path);
+			auto &seg = segments.back();
 
 			/* use 1st SAV as the path */
 			if (save_file.empty()) save_file = path;
@@ -917,8 +922,6 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			 */
 
 			if (lkv == 1 || lkv == 2 || lkv == 3) {
-				auto &seg = segments.back();
-				std::string base = basename(path);
 				/* merlin link uses a 10-char fixed label */
 				//base.resize(10, ' ');
 				seg.segname = base;
@@ -932,6 +935,8 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 				new_segment(true);
 			}
 			if (lkv == 2) {
+
+				if (verbose) printf("Segment %d: %s\n", seg.segnum, base.c_str());
 				/* add a new segment */
 				new_segment();
 			}
