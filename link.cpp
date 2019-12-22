@@ -175,6 +175,7 @@ namespace {
 
 	std::unordered_map<std::string, uint32_t> local_symbol_table; 
 
+	std::string loadname;
 }
 
 
@@ -917,6 +918,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 			/* use 1st SAV as the path */
 			if (save_file.empty()) save_file = path;
+			if (loadname.empty()) loadname = base;
 
 			/*
 				lkv 0 = binary linker (unsupported)
@@ -929,7 +931,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 				/* merlin link uses a 10-char fixed label */
 				//base.resize(10, ' ');
 				seg.segname = base;
-				seg.loadname = base;
+				seg.loadname = loadname;
 				// seg.kind = kind;
 			}
 
