@@ -348,11 +348,13 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 		} else {
 
 			// offset already adjusted by start so below comparisons are wrong.
-			switch(flag & (0x80 | 0x40 | 0x20)) {
-				case 0:
+			switch(flag & 0xf0) {
+				case 0x00:
+				case 0x10:
 					size = 1;
 					break;
 				case 0x20:
+				case 0x30:
 					size = 3;
 					break;
 				case 0x40:
@@ -360,6 +362,7 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 					shift = -8;
 					break;
 				case 0x80:
+				case 0x90:
 					size = 2;
 					break;
 				default: /* bad size */
@@ -378,6 +381,7 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 			if (flag & 0x40) {
 				/* value is already shifted, so need to adjust back */
 				value <<= 8;
+				value += x; /* low-byte of address */
 				value -= 0x8000;
 				assert(!external);
 			}
