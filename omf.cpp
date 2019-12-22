@@ -116,7 +116,8 @@ public:
 
 		if (page != _page) {
 			unsigned skip = page - _page;
-			if (skip > 1) {
+			if (_count) --skip;
+			if (skip) {
 				
 				while (skip >= 0x80) {
 					_data.push_back(0xff);
