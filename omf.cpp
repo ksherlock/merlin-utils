@@ -383,6 +383,41 @@ void save_bin(const std::string &path, omf::segment &segment, uint32_t org) {
 	close(fd);
 }
 
+void save_object(const std::string &path, omf::segment &s, uint32_t length) {
+
+	/* data is already in OMF format. */
+
+	int fd;
+	fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+	if (fd < 0) {
+		err(EX_CANTCREAT, "Unable to open %s", path.c_str());
+	}
+
+	omf_header h;
+	h.length = length + s.reserved_space;
+	h.kind = s.kind;
+	h.banksize = length > 0xffff ? 0x0000 : 0x010000;
+	h.segnum = 0;
+	h.alignment = s.alignment;
+	h.reserved_space = s.reserved_space;
+
+	std::vector<uint8_t> data;
+
+	// push segname and load name onto data.
+	// data.insert(data.end(), 10, ' ');
+	push(data, s.loadname, 10);
+	push(data, s.segname);
+
+	h.dispname = sizeof(omf_header);
+	h.dispdata = sizeof(omf_header) + data.size();
+	h.bytecount = sizeof(omf_header) + data.size() + s.data.size();
+
+	unsigned offset = 0;
+	offset += write(fd, &h, sizeof(h));
+	offset += write(fd, data.data(), data.size());
+	offset += write(fd, s.data.data(), s.data.size());
+	close(fd);
+}
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload) {
 

@@ -483,6 +483,7 @@ static void process_unit(const std::string &path) {
 	len_offset = offset;
 }
 
+
 static void import(const std::string &path, const std::string &name) {
 
 	std::error_code ec;
@@ -511,13 +512,14 @@ static void import(const std::string &path, const std::string &name) {
 	len_offset = mf.size();
 }
 
-static void resolve(void) {
+static void resolve(bool allow_unresolved = false) {
 
 	for (unsigned ix = 0; ix < segments.size(); ++ix) {
 
 		auto &seg = segments[ix];
 		auto &pending = relocations[ix];
 
+		std::vector<pending_reloc> unresolved;
 
 		if ((seg.kind & 0x0001) == 0x0001 && seg.data.size() > 65535) {
 			throw std::runtime_error("code exceeds bank");
@@ -527,12 +529,16 @@ static void resolve(void) {
 			assert(r.id < symbol_map.size());
 			const auto &e = symbol_table[r.id];
 
-			/* if this is an absolute value, do the math */
 			if (!e.defined) {
-				warnx("%s is not defined", e.name.c_str());
+				if (allow_unresolved) {
+					unresolved.emplace_back(std::move(r));
+				} else {
+					warnx("%s is not defined", e.name.c_str());
+				}
 				continue;
 			}
 
+			/* if this is an absolute value, do the math */
 			if (e.absolute) {
 				uint32_t value = e.value + r.value;
 				/* shift is a uint8_t so negating doesn't work right */
@@ -572,6 +578,11 @@ static void resolve(void) {
 		std::sort(seg.intersegs.begin(), seg.intersegs.end(), [](const auto &a, const auto &b){
 			return a.offset < b.offset;
 		});
+
+		std::sort(unresolved.begin(), unresolved.end(), [](const auto &a, const auto &b){
+			return a.offset < b.offset;
+		});
+		pending = std::move(unresolved);
 	}
 }
 
@@ -651,6 +662,215 @@ void finish(void) {
 	relocations.clear();
 }
 
+namespace {
+
+	void push(std::vector<uint8_t> &v, uint8_t x) {
+		v.push_back(x);
+	}
+
+	void push(std::vector<uint8_t> &v, uint16_t x) {
+		v.push_back(x & 0xff);
+		x >>= 8;
+		v.push_back(x & 0xff);
+	}
+
+	void push(std::vector<uint8_t> &v, uint32_t x) {
+		v.push_back(x & 0xff);
+		x >>= 8;
+		v.push_back(x & 0xff);
+		x >>= 8;
+		v.push_back(x & 0xff);
+		x >>= 8;
+		v.push_back(x & 0xff);
+	}
+
+	void push(std::vector<uint8_t> &v, const std::string &s) {
+		uint8_t count = std::min((int)s.size(), 255);
+		push(v, count);
+		v.insert(v.end(), s.begin(), s.begin() + count);
+	}
+
+	void push(std::vector<uint8_t> &v, const std::string &s, size_t count) {
+		std::string tmp(s, 0, count);
+		tmp.resize(count, ' ');
+		v.insert(v.end(), tmp.begin(), tmp.end());
+	}
+
+}
+
+static void add_expr(std::vector<uint8_t> &buffer, const omf::reloc &r, int ix) {
+
+	push(buffer, omf::opcode::EXPR);
+	push(buffer, static_cast<uint8_t>(r.size));
+
+	if (ix >= 0) {
+		/* external */
+		push(buffer, static_cast<uint8_t>(0x83)); /* label reference */
+		push(buffer, symbol_table[ix].name);
+
+		if (r.value) {
+
+			push(buffer, static_cast<uint8_t>(0x81)); /* abs */
+			push(buffer, static_cast<uint32_t>(r.value));
+			push(buffer, static_cast<uint8_t>(0x01)); /* + */
+		}
+	} else {
+		push(buffer, static_cast<uint8_t>(0x87)); /* rel */
+		push(buffer, static_cast<uint32_t>(r.value));
+	}
+
+	if (r.shift){
+		push(buffer, static_cast<uint8_t>(0x81)); /* abs */
+		push(buffer, static_cast<uint32_t>(static_cast<int8_t>(r.shift)));
+		push(buffer, static_cast<uint8_t>(0x07)); /* << */
+	}
+
+	push(buffer, static_cast<uint8_t>(0)); /* end of expr */
+
+}
+
+/* REL to OMF object file */
+/* relocations and labels need to be placed inline */
+void finish3(void) {
+
+	resolve(true); /* allow unresolved references */
+
+	std::vector< std::pair<uint32_t, std::string> > globals;
+
+	auto &seg = segments.back();
+	auto &unresolved = relocations.back();
+	auto &resolved = seg.relocs;
+	auto &data = seg.data;
+
+	std::vector<uint8_t> buffer;
+	/* 1. generate GEQU for all global equates */
+	for (const auto &sym : symbol_table) {
+		if (sym.defined) {
+			if (sym.absolute) {
+
+				push(buffer, omf::opcode::GEQU);
+				push(buffer, sym.name);
+				push(buffer, static_cast<uint16_t>(0x00)); /* length attr */
+				push(buffer, static_cast<uint8_t>('G')); /* type attr */
+				push(buffer, static_cast<uint32_t>(sym.value));
+			} else {
+				globals.emplace_back(sym.value, sym.name);
+			}
+		}
+	}
+	std::sort(globals.begin(), globals.end());
+
+
+
+	auto iter1 = globals.begin();
+	auto iter2 = unresolved.begin();
+	auto iter3 = resolved.begin();
+
+	std::vector<unsigned> breaks;
+	for (const auto &x : globals) {
+		breaks.push_back(x.first);
+	}
+	for (const auto &x : resolved) {
+		breaks.push_back(x.offset);
+	}
+	for (const auto &x : unresolved) {
+		breaks.push_back(x.offset);
+	}
+	/* sort in reverse order */
+	std::sort(breaks.begin(), breaks.end(), std::greater<unsigned>());
+	breaks.erase(std::unique(breaks.begin(), breaks.end()), breaks.end());
+
+
+	unsigned pc = 0;
+	unsigned offset = 0;
+	for(;;) {
+		unsigned next = data.size();
+
+		while (!breaks.empty() && breaks.back() < offset) breaks.pop_back();
+
+		if (!breaks.empty()) {
+			next = std::min(next, breaks.back());
+			breaks.pop_back();
+		}
+
+		if (next < offset)
+			throw std::runtime_error("relocation offset error");
+
+		unsigned size = next - offset;
+		if (size) {
+			if (size <= 0xdf)
+				push(buffer, static_cast<uint8_t>(size));
+			else {
+				push(buffer, omf::opcode::LCONST);
+				push(buffer, static_cast<uint32_t>(size));
+			}
+			while (offset < next) buffer.push_back(data[offset++]);
+			pc += size;
+		}
+
+
+		/* global expr global expr */
+		for(;;) {
+			bool delta = false;
+			while (iter1 != globals.end() && iter1->first == offset) {
+				/* add global record */
+				push(buffer, omf::opcode::GLOBAL);
+				push(buffer, iter1->second); /* name */
+				push(buffer, static_cast<uint16_t>(0x00)); /* length attr */
+				push(buffer, static_cast<uint8_t>('N')); /* type attr */
+				push(buffer, static_cast<uint8_t>(0x00)); /* public */
+				++iter1;
+			}
+
+			if (iter2 != unresolved.end() && iter2->offset == offset) {
+				const auto &r = *iter2;
+				add_expr(buffer, r, r.id);
+				offset += r.size;
+				pc += r.size;
+				delta = true;
+				++iter2;
+			}
+			if (iter3 != resolved.end() && iter3->offset == offset) {
+				const auto &r = *iter3;
+				add_expr(buffer, r, -1);
+				offset += r.size;
+				pc += r.size;
+				delta = true;
+				++iter3;
+			}
+			if (!delta) break;
+		}
+		if (offset >= data.size()) break;
+	}
+
+	push(buffer, omf::opcode::END);
+	seg.data = std::move(buffer);
+
+	if (iter1 != globals.end())
+		throw std::runtime_error("label offset error");
+	if (iter2 != unresolved.end())
+		throw std::runtime_error("relocation offset error");
+	if (iter3 != resolved.end())
+		throw std::runtime_error("relocation offset error");
+
+	void save_object(const std::string &path, omf::segment &s, uint32_t length);
+
+
+	std::string path = save_file;
+	if (path.empty()) path = "omf.out";
+	if (verbose) printf("Saving %s\n", path.c_str());
+
+	try {
+		save_object(path, seg, pc);
+		set_file_type(path, 0xb1, 0x0000);
+	} catch (std::exception &ex) {
+		errx(EX_OSERR, "%s: %s", path.c_str(), ex.what());
+	}
+
+	print_symbols();
+	segments.clear();
+	relocations.clear();
+}
 
 void lib(const std::string &path) {
 
@@ -865,10 +1085,10 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 			uint32_t value = number_operand(cursor, local_symbol_table);
 			switch (value) {
-				case 3: throw std::runtime_error("object file linker not supported");
 				case 0:
 				case 1:
 				case 2:
+				case 3:
 					lkv = value;
 					break;
 				default:
@@ -921,10 +1141,10 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			if (loadname.empty()) loadname = base;
 
 			/*
-				lkv 0 = binary linker (unsupported)
+				lkv 0 = binary linker
 				lkv 1 = 1 segment GS linker
 				lkv 2 = multi-segment GS linker
-				lkv 3 = convert REL to OMF object file (unsupported)
+				lkv 3 = convert REL to OMF object file
 			 */
 
 			if (lkv == 1 || lkv == 2 || lkv == 3) {
@@ -935,17 +1155,23 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 				// seg.kind = kind;
 			}
 
-			if (lkv == 0 || lkv == 1) {
-				finish();
-				// reset.  could have another link afterwards.
-				new_segment(true);
+			switch (lkv) {
+				case 0:
+				case 1:
+					finish();
+					new_segment(true);
+					break;
+				case 2:
+					if (verbose) printf("Segment %d: %s\n", seg.segnum, base.c_str());
+					/* add a new segment */
+					new_segment();
+					break;
+				case 3:
+					finish3();
+					new_segment(true);
+					break;			
 			}
-			if (lkv == 2) {
 
-				if (verbose) printf("Segment %d: %s\n", seg.segnum, base.c_str());
-				/* add a new segment */
-				new_segment();
-			}
 			++sav;
 			break;
 		}
