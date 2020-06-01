@@ -317,6 +317,8 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 
 		offset += cookie.begin;
 		bool external = false;
+		bool ddb = false;
+
 		unsigned shift = 0;
 		uint32_t value = 0;
 		unsigned size = 0;
@@ -366,6 +368,12 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 				case 0x90:
 					size = 2;
 					break;
+				case 0xa0:
+				case 0xb0:
+					/* ddb */
+					size = 2;
+					ddb = true;
+					break;
 				default: /* bad size */
 					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
 					break;
@@ -373,11 +381,15 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 			external = flag & 0x10;
 
 			assert(offset + size  <= cookie.end);
+
+
 			switch(size) {
 				case 3: value |= seg.data[offset+2] << 16;
 				case 2: value |= seg.data[offset+1] << 8;
 				case 1: value |= seg.data[offset+0];
 			}
+
+			if (ddb) value = ((value >> 8) | (value << 8)) & 0xffff;
 
 			if (flag & 0x40) {
 				/* value is already shifted, so need to adjust back */
@@ -388,6 +400,53 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 			}
 			if (size > 1) value -= 0x8000;
 
+		}
+
+		/* clear out the inline relocation data */
+		for (unsigned i = 0; i < size; ++i) {
+			seg.data[offset + i] = 0;
+		}
+
+		if (ddb) {
+			/*
+			 * ddb - data is stored inline in big-endian format.
+			 * generate 1-byte, -8 shift for offset+0
+			 * generate 1-byte, 0 shift for offset+1
+			 */
+
+
+			if (external) {
+				pending_reloc r;
+				assert(x < cookie.remap.size());
+				r.id = cookie.remap[x];
+				r.size = 1;
+				r.offset = offset;
+				r.value = value;
+				r.shift = -8;
+
+				symbol_table[r.id].count += 1;
+				pending.emplace_back(r);
+
+				pending.emplace_back(r);
+				r.offset++;
+				r.shift = 0;
+				pending.emplace_back(r);
+
+			} else {
+
+				omf::reloc r;
+				r.size = 1;
+				r.offset = offset;
+				r.value = value + cookie.begin;
+				r.shift = -8;
+
+				seg.relocs.emplace_back(r);
+
+				r.offset++;
+				r.shift = 0;
+				seg.relocs.emplace_back(r);
+			}
+			return;
 		}
 
 		/* external resolutions are deferred for later */
@@ -412,10 +471,7 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 
 			seg.relocs.emplace_back(r);
 		}
-		/* clear out the inline relocation data */
-		for (unsigned i = 0; i < size; ++i) {
-			seg.data[offset + i] = 0;
-		}
+
 		//cookie.zero.emplace_back(std::make_pair(offset, size));
 	}
 }
