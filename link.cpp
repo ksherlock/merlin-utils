@@ -1,6 +1,7 @@
 /* c++17 */
 
 #include <algorithm>
+#include <numeric>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -645,14 +646,15 @@ static void resolve(bool allow_unresolved = false) {
 }
 
 
-static void print_symbols2(void) {
+static void print_symbols2(const std::vector<size_t> &ix) {
 
 	size_t len = 8;
 	for (const auto &e : symbol_table) {
 		len = std::max(len, e.name.size());
 	}
 
-	for (const auto &e : symbol_table) {
+	for (auto i : ix) {
+		const auto &e = symbol_table[i];
 		char q = ' ';
 		if (!e.count) q = '?';
 		if (!e.defined) q = '!';
@@ -666,18 +668,47 @@ static void print_symbols(void) {
 
 	if (symbol_table.empty()) return;
 
+	std::vector<size_t> ix(symbol_table.size());
+	std::iota(ix.begin(), ix.end(), 0);
+
 	/* alpha */
 	fputs("\nSymbol table, alphabetical order:\n", stdout);
+
+
+	std::sort(ix.begin(), ix.end(), [&](const size_t a, const size_t b){
+		const symbol &aa = symbol_table[a];
+		const symbol &bb = symbol_table[b];
+
+		return aa.name < bb.name;
+	});
+
+#if 0
 	std::sort(symbol_table.begin(), symbol_table.end(),
 		[](const symbol &a, const symbol &b){
 			return a.name < b.name; 
 		});
+#endif
+	print_symbols2(ix);
 
-	print_symbols2();
+	std::iota(ix.begin(), ix.end(), 0);
 
 	fputs("\nSymbol table, numerical order:\n", stdout);
 
 	/* numeric, factoring in segment #, absolute first */
+
+	std::sort(ix.begin(), ix.end(), [&](const size_t a, const size_t b){
+		const symbol &aa = symbol_table[a];
+		const symbol &bb = symbol_table[b];
+
+			/* absolute have a segment # of 0 so will sort first */
+			auto aaa = std::make_pair(aa.segment, aa.value);
+			auto bbb = std::make_pair(bb.segment, bb.value);
+
+			return aaa < bbb;
+
+	});
+
+#if 0
 	std::sort(symbol_table.begin(), symbol_table.end(),
 		[](const symbol &a, const symbol &b){
 			/* absolute have a segment # of 0 so will sort first */
@@ -686,8 +717,8 @@ static void print_symbols(void) {
 
 			return aa < bb;
 		});
-
-	print_symbols2();
+#endif
+	print_symbols2(ix);
 	fputs("\n", stdout);
 }
 
@@ -727,9 +758,6 @@ void finish(void) {
 	}
 
 	check_exd();
-
-	/* OP_ENT should print symbols */
-	print_symbols();
 
 	segments.clear();
 	relocations.clear();
@@ -1248,6 +1276,10 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			++sav;
 			break;
 		}
+
+		case OP_ENT:
+			print_symbols();
+			break;
 
 		case OP_KBD: {
 			char buffer[256];
