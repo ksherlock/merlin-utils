@@ -20,6 +20,7 @@ struct symbol {
 
 	bool absolute = false;
 	bool defined = false;
+	bool exd = false;
 };
 
 /*

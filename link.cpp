@@ -264,6 +264,8 @@ static void process_labels(byte_view &data, cookie &cookie) {
 		switch (flag & ~0x1f) {
 			case SYMBOL_EXTERNAL:
 				/* map the unit symbol # to a global symbol # */
+				if (!(value & 0x8000)) e->exd = true;
+
 				value &= 0x7fff;
 				if (cookie.remap.size() < value + 1)
 					cookie.remap.resize(value + 1);
@@ -690,6 +692,18 @@ static void print_symbols(void) {
 }
 
 
+static void check_exd(void) {
+
+	for (const auto &e : symbol_table) {
+
+		if (!e.exd) continue;
+		if (!e.defined) continue;
+		if (e.absolute && e.value < 0x0100) continue;
+		if (!e.absolute && lkv == 0 && (e.value + org) < 0x0100) continue;
+
+		warnx("%s defined as direct page", e.name.c_str());
+	}
+}
 
 
 void finish(void) {
@@ -712,6 +726,9 @@ void finish(void) {
 		errx(EX_OSERR, "%s: %s", path.c_str(), ex.what());
 	}
 
+	check_exd();
+
+	/* OP_ENT should print symbols */
 	print_symbols();
 
 	segments.clear();
