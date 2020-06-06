@@ -17,6 +17,19 @@
 #define O_BINARY 0
 #endif
 
+
+enum class endian {
+#ifdef _WIN32
+    little = 0,
+    big    = 1,
+    native = little
+#else
+    little = __ORDER_LITTLE_ENDIAN__,
+    big    = __ORDER_BIG_ENDIAN__,
+    native = __BYTE_ORDER__
+#endif
+};
+
 #pragma pack(push, 1)
 struct omf_header {
 	uint32_t bytecount = 0;
@@ -65,6 +78,87 @@ struct omf_express_header {
 
 static_assert(sizeof(omf_header) == 44, "OMF Header not packed");
 static_assert(sizeof(omf_express_header) == 48, "OMF Express Header not packed");
+
+
+/*
+inline uint8_t to_little(uint8_t x) {
+	return x;
+}
+inline uint16_t to_little(uint16_t x) {
+	return endian::native == endian::little ? x : __builtin_bswap16(x);
+}
+inline uint32_t to_little(uint32_t x) {
+	return endian::native == endian::little ? x : __builtin_bswap32(x);
+}
+*/
+
+
+static void swap(uint8_t &x) {}
+static void swap(uint16_t &x) { 
+	#if defined(__GNUC__)
+	x = __builtin_bswap16(x);
+	#else
+	x = (x >> 8) | (x << 8);
+	#endif
+}
+static void swap(uint32_t &x) {
+	#if defined(__GNUC__)
+	x = __builtin_bswap32(x);
+	#else
+	x = ((x & 0xff000000) >> 24) |
+		((x & 0x00ff0000) >> 8) |
+		((x & 0x0000ff00) << 8) |
+		((x & 0x000000ff) << 24);
+	#endif
+}
+
+
+static void to_little(struct omf_header &h) {
+	if (endian::native != endian::little) {
+		swap(h.bytecount);
+		swap(h.reserved_space);
+		swap(h.length);
+		swap(h.unused1);
+		swap(h.lablen);
+		swap(h.numlen);
+		swap(h.version);
+		swap(h.banksize);
+		swap(h.kind);
+		swap(h.unused2);
+		swap(h.org);
+		swap(h.alignment);
+		swap(h.numsex);
+		swap(h.unused3);
+		swap(h.segnum);
+		swap(h.entry);
+		swap(h.dispname);
+		swap(h.dispdata);
+	}
+}
+
+static void to_little(struct omf_express_header &h) {
+	if (endian::native != endian::little) {
+		swap(h.lconst_mark);
+		swap(h.lconst_size);
+		swap(h.reloc_mark);
+		swap(h.reloc_size);
+		swap(h.unused1);
+		swap(h.lablen);
+		swap(h.numlen);
+		swap(h.version);
+		swap(h.banksize);
+		swap(h.kind);
+		swap(h.unused2);
+		swap(h.org);
+		swap(h.alignment);
+		swap(h.numsex);
+		swap(h.unused3);
+		swap(h.segnum);
+		swap(h.entry);
+		swap(h.dispname);
+		swap(h.dispdata);
+	}
+}
 
 void push(std::vector<uint8_t> &v, uint8_t x) {
 	v.push_back(x);
@@ -413,6 +507,7 @@ void save_object(const std::string &path, omf::segment &s, uint32_t length) {
 	h.bytecount = sizeof(omf_header) + data.size() + s.data.size();
 
 	unsigned offset = 0;
+	to_little(h);
 	offset += write(fd, &h, sizeof(h));
 	offset += write(fd, data.data(), data.size());
 	offset += write(fd, s.data.data(), s.data.size());
@@ -512,10 +607,6 @@ void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool
 
 		h.bytecount = data.size() + sizeof(omf_header);
 
-		// todo -- byteswap to little-endian!
-		offset += write(fd, &h, sizeof(h));
-		offset += write(fd, data.data(), data.size());
-
 		if (expressload) {
 
 			expr_offsets.emplace_back(expr_headers.size());
@@ -549,6 +640,9 @@ void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool
 			push(expr_headers, s.segname);
 		}
 
+		to_little(h);
+		offset += write(fd, &h, sizeof(h));
+		offset += write(fd, data.data(), data.size());
 	}
 
 	if (expressload) {
@@ -588,6 +682,7 @@ void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool
 
 		h.bytecount = data.size() + sizeof(omf_header);
 
+		to_little(h);
 		lseek(fd, 0, SEEK_SET);
 		write(fd, &h, sizeof(h));
 		write(fd, data.data(), data.size());
