@@ -19,10 +19,9 @@ If there is one input file and it ends with `.S` (case insensitive), it is treat
 The following opcodes are supported:
 
 `END`,`DAT`, `PFX`, `TYP`, `ADR`, `ORG`, `KND`, `ALI`, `DS`, `LKV`, `VER`, `LNK`, `IMP`, `SAV`, `KBD`,
-`POS`, `LEN`, `EQ`, `EQU`, `=`, `GEQ`, `EXT`, `DO`, `ELS`, `FIN`
+`POS`, `LEN`, `EQ`, `EQU`, `=`, `GEQ`, `EXT`, `DO`, `ELS`, `FIN`, `ENT`
 
 * `VER`: only allows OMF version 2.
-* `LKV`: 0 (binary), 1 (single segment OMF), 2 (multi segment OMF)
 * `IMP`: (qasm) - import a binary file. Entry name is the file name with non alphanumerics converted to `_`
 * `KBD`: won't prompt if label was previously defined (via `-D` for example)
 
@@ -45,4 +44,4 @@ git submodule update
 make
 ```
 
-Requires a c++17 compiler. (ie, ubuntu bionic or OS X 10.13).  Also assumes a little-endian environment :/
+Requires a c++17 compiler. (ie, ubuntu bionic or OS X 10.13).
