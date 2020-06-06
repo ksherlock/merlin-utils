@@ -983,7 +983,7 @@ void lib(const std::string &path) {
 
 	/* symbol table might reallocate so can't use for( : ) loop */
 	/* any new dependencies will be appended at the end and processed */
-	for (unsigned i = 0; i < symbol_table.size(); ++i) {
+	for (size_t i = 0; i < symbol_table.size(); ++i) {
 
 		auto &e = symbol_table[i];
 
@@ -1454,6 +1454,7 @@ void process_files(int argc, char **argv) {
 		}
 	}
 	finish();
+	if (verbose) print_symbols();
 	exit(0);
 }
 
