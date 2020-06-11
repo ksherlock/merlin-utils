@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-
 #include <cassert>
 #include <cerrno>
 #include <cstdint>
@@ -54,6 +53,8 @@ struct cookie {
 
 	uint32_t begin = 0;
 	uint32_t end = 0;
+
+	unsigned ds_fill = 0;
 };
 
 
@@ -167,8 +168,8 @@ namespace {
 	bool fas = false;
 	int ovr = OVR_OFF;
 
-	size_t pos_offset = 0;
-	size_t len_offset = 0;
+	size_t pos_var = 0;
+	size_t len_var = 0;
 
 	/* do/els/fin stuff.  32 do levels supported. */
 	uint32_t active_bits = 1;
@@ -239,8 +240,8 @@ void new_segment(bool reset = false) {
 
 	segments.back().segnum = segments.size();
 	segments.back().kind = 4096; /* no special memory */
-	len_offset = 0;
-	pos_offset = 0;
+	len_var = 0;
+	pos_var = 0;
 }
 
 
@@ -377,6 +378,10 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 					size = 2;
 					ddb = true;
 					break;
+				case 0xc0:
+					/* $cf - ds fill */
+					if (!cookie.ds_fill) cookie.ds_fill = x | 0x0100;
+					return;
 				default: /* bad size */
 					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
 					break;
@@ -521,7 +526,6 @@ static void process_unit(const std::string &path) {
 	byte_view data(mf.data() + offset, mf.size() - offset);
 
 
-
 	byte_view rr = data;
 	/* skip over the relocation records so we can process the labels first. */
 	/* this is so external references can use the global symbol id */
@@ -538,8 +542,19 @@ static void process_unit(const std::string &path) {
 	/* now relocations */
 	process_reloc(rr, cookie);
 
+	if (cookie.ds_fill) {
+		/* per empirical merlin testing,
+			LEN/POS opcodes not affected by DS \ fills.
+		 */
+		unsigned sz = (256ul - seg.data.size()) & 0xff;
+		if (sz) {
+			seg.data.insert(seg.data.end(), sz, cookie.ds_fill & 0xff);
+		}
+	}
+
 	// LEN support
-	len_offset = offset;
+	len_var = offset;
+	pos_var += offset;
 }
 
 
@@ -568,7 +583,8 @@ static void import(const std::string &path, const std::string &name) {
 	seg.data.insert(seg.data.end(), mf.data(), mf.data() + mf.size());
 
 	// LEN support
-	len_offset = mf.size();
+	len_var = mf.size();
+	pos_var += mf.size();
 }
 
 static void resolve(bool allow_unresolved = false) {
@@ -1313,11 +1329,9 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 			std::string label = label_operand(cursor, OP_OPTIONAL);
 			if (label.empty()) {
-				pos_offset = segments.back().data.size();
+				pos_var = 0;
 			} else {
-				uint32_t value = segments.back().data.size() - pos_offset;
-
-				define(label, value, LBL_POS);
+				define(label, pos_var, LBL_POS);
 			}
 			break;
 		}
@@ -1326,7 +1340,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			// sets label = length of most recent file linked
 
 			std::string label = label_operand(cursor);
-			uint32_t value = len_offset;
+			uint32_t value = len_var;
 			define(label, value, LBL_LEN);
 			break;
 		}
