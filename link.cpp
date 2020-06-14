@@ -53,8 +53,6 @@ struct cookie {
 
 	uint32_t begin = 0;
 	uint32_t end = 0;
-
-	unsigned ds_fill = 0;
 };
 
 
@@ -378,9 +376,8 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 					size = 2;
 					ddb = true;
 					break;
-				case 0xc0:
-					/* $cf - ds fill */
-					if (!cookie.ds_fill) cookie.ds_fill = x | 0x0100;
+				case 0xc0: /* ds fill */
+				case 0xe0: /* err constraint */
 					return;
 				default: /* bad size */
 					errx(1, "%s: Unsupported flag: %02x\n", cookie.file.c_str(), flag);
@@ -485,6 +482,46 @@ static void process_reloc(byte_view &data, cookie &cookie) {
 }
 
 
+static void process_ds_err(byte_view &data) {
+
+	auto &seg = segments.back();
+
+	for(;;) {
+		assert(data.size());
+		unsigned flag = data[0];
+		if (flag == 0x00) return;
+
+		assert(data.size() >= 4);
+
+		if (flag == 0xcf) {
+			/* ds \ fill.  */
+			uint8_t c = data[3];
+
+			size_t sz = seg.data.size() & 0xff;
+			if (sz) {
+
+				seg.data.insert(seg.data.end(), 0x100-sz, c);
+			}
+		}
+		if (flag == 0xef) {
+			/* err \ constraint */
+			size_t sz = seg.data.size() + org;
+			uint32_t addr = (data[1] << 0) | (data[2] << 8) | (data[3] << 16);
+			if (sz >= addr) {
+				warnx("Constraint at $%04x excess = $%04x", addr, static_cast<uint32_t>(sz - addr));
+			}
+		}
+
+
+		if (flag == 0xff) {
+			assert(data.size() >= 8);
+			data.remove_prefix(8);
+		} else {
+			data.remove_prefix(4);
+		}
+	}
+}
+
 static void process_unit(const std::string &path) {
 
 	cookie cookie;
@@ -540,19 +577,14 @@ static void process_unit(const std::string &path) {
 	assert(data.size() == 1);
 
 	/* now relocations */
+	process_ds_err(rr);
 	process_reloc(rr, cookie);
 
-	if (cookie.ds_fill) {
-		/* per empirical merlin testing,
-			LEN/POS opcodes not affected by DS \ fills.
-		 */
-		unsigned sz = (256ul - seg.data.size()) & 0xff;
-		if (sz) {
-			seg.data.insert(seg.data.end(), sz, cookie.ds_fill & 0xff);
-		}
-	}
 
 	// LEN support
+	/* per empirical merlin testing,
+		LEN/POS opcodes not affected by DS \ fills.
+	*/
 	len_var = offset;
 	pos_var += offset;
 }
