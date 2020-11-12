@@ -813,6 +813,10 @@ void finish(void) {
 
 namespace {
 
+	void push(std::vector<uint8_t> &v, omf::opcode x) {
+		v.push_back(static_cast<uint8_t>(x));
+	}
+
 	void push(std::vector<uint8_t> &v, uint8_t x) {
 		v.push_back(x);
 	}
