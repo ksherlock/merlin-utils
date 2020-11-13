@@ -31,7 +31,7 @@
 #include "script.h"
 
 void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
-void save_bin(const std::string &path, omf::segment &segment, uint32_t org);
+void save_bin(const std::string &path, omf::segment &segment);
 
 int set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type, std::error_code &ec);
 void set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type);
@@ -796,7 +796,7 @@ void finish(void) {
 	if (verbose) printf("Saving %s\n", path.c_str());
 	try {
 		if (lkv == 0)
-			save_bin(path, segments.back(), org);
+			save_bin(path, segments.back());
 		else
 			save_omf(path, segments, compress, express);
 
@@ -1205,6 +1205,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 
 		case OP_ORG:
 			org = number_operand(cursor, local_symbol_table);
+			segments.back().org = org;			
 			atype = org;
 			break;
 

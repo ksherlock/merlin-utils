@@ -446,7 +446,7 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 	return reloc_size;
 }
 
-void save_bin(const std::string &path, omf::segment &segment, uint32_t org) {
+void save_bin(const std::string &path, omf::segment &segment) {
 
 	int fd;
 	fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
@@ -454,6 +454,7 @@ void save_bin(const std::string &path, omf::segment &segment, uint32_t org) {
 		err(EX_CANTCREAT, "Unable to open %s", path.c_str());
 	}
 
+	uint32_t org = segment.org;
 	auto &data = segment.data;
 
 	for (auto &r : segment.relocs) {
@@ -494,6 +495,7 @@ void save_object(const std::string &path, omf::segment &s, uint32_t length) {
 	h.segnum = 0;
 	h.alignment = s.alignment;
 	h.reserved_space = s.reserved_space;
+	h.org = s.org;
 
 	std::vector<uint8_t> data;
 
@@ -560,6 +562,7 @@ void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool
 		h.segnum = s.segnum;
 		h.alignment = s.alignment;
 		h.reserved_space = s.reserved_space;
+		h.org = s.org;
 
 		uint32_t reserved_space = 0;
 		if (expressload) {
