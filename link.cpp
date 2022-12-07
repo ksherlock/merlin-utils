@@ -30,7 +30,7 @@
 #include "link.h"
 #include "script.h"
 
-void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload);
+void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload, unsigned version = 2);
 void save_bin(const std::string &path, omf::segment &segment);
 
 int set_file_type(const std::string &path, uint16_t file_type, uint32_t aux_type, std::error_code &ec);
@@ -1255,7 +1255,7 @@ void evaluate(label_t label, opcode_t opcode, const char *cursor) {
 			/* OMF version, 1 or 2 */
 			uint32_t value = number_operand(cursor, local_symbol_table);
 
-			if (value != 2)
+			if (value < 1 || value > 2)
 				throw std::runtime_error("bad OMF version");
 			ver = value;
 			break;

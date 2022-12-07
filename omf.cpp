@@ -32,20 +32,20 @@ enum class endian {
 
 #pragma pack(push, 1)
 struct omf_header {
-	uint32_t bytecount = 0;
+	uint32_t bytecount = 0; // block count in v1
 	uint32_t reserved_space = 0;
 	uint32_t length = 0;
-	uint8_t unused1 = 0;
+	uint8_t unused1 = 0; // kind in v1
 	uint8_t lablen = 0;
 	uint8_t numlen = 4;
 	uint8_t version = 2;
 	uint32_t banksize = 0;
-	uint16_t kind = 0;
+	uint16_t kind = 0; // unused in v1
 	uint16_t unused2 = 0;
 	uint32_t org = 0;
 	uint32_t alignment = 0;
 	uint8_t numsex = 0;
-	uint8_t unused3 = 0;
+	uint8_t unused3 = 0; // lcbank in v1
 	uint16_t segnum = 0;
 	uint32_t entry = 0;
 	uint16_t dispname = 0;
@@ -73,6 +73,7 @@ struct omf_express_header {
 	uint16_t dispname = 0;
 	uint16_t dispdata = 0;
 };
+
 
 #pragma pack(pop)
 
@@ -158,6 +159,17 @@ static void to_little(struct omf_express_header &h) {
 		swap(h.dispname);
 		swap(h.dispdata);
 	}
+}
+
+static void to_v1(struct omf_header &h) {
+
+	// KIND op value used as-is, no translation.
+
+	h.version = 1;
+	// byte count -> block count
+	h.bytecount = (h.bytecount + 511) >> 9;
+	h.unused1 = h.kind;
+	h.kind = 0;
 }
 
 void push(std::vector<uint8_t> &v, uint8_t x) {
@@ -288,7 +300,7 @@ enum {
 	SUPER_INTERSEG36,
 };
 
-uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment &seg, bool compress) {
+uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment &seg, bool compress, bool super) {
 
 	std::array< std::optional<super_helper>, 38 > ss;
 
@@ -297,9 +309,9 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 
 	for (auto &r : seg.relocs) {
 
-		if (r.can_compress()) {
+		if (compress && r.can_compress()) {
 
-			if (compress) {
+			if (super) {
 				if (r.shift == 0 && r.size == 2) {
 					constexpr int n = SUPER_RELOC2;
 
@@ -361,9 +373,9 @@ uint32_t add_relocs(std::vector<uint8_t> &data, size_t data_offset, omf::segment
 	}
 
 	for (const auto &r : seg.intersegs) {
-		if (r.can_compress()) {
+		if (compress && r.can_compress()) {
 
-			if (compress) {
+			if (super) {
 
 				if (r.shift == 0 && r.size == 3) {
 					constexpr int n = SUPER_INTERSEG1;
@@ -516,10 +528,20 @@ void save_object(const std::string &path, omf::segment &s, uint32_t length) {
 	close(fd);
 }
 
-void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload) {
+void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool compress, bool expressload, unsigned version) {
 
 	// expressload doesn't support links to other files. 
 	// fortunately, we don't either.
+
+	// "compress" really means SUPER, not cRELOC/cINTERSEG
+
+
+	// version 1 OMF lacks support for SUPER records or expressload.
+
+	if (version == 1) {
+		compress = false;
+		expressload = false;
+	}
 
 	std::vector<uint8_t> expr_headers;
 	std::vector<unsigned> expr_offsets;
@@ -603,7 +625,7 @@ void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool
 		uint32_t reloc_offset = offset + sizeof(omf_header) + data.size();
 		uint32_t reloc_size = 0;
 
-		reloc_size = add_relocs(data, data_offset, s, compress);
+		reloc_size = add_relocs(data, data_offset, s, true, compress);
 
 		// end-of-record
 		push(data, (uint8_t)omf::END);
@@ -643,6 +665,7 @@ void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool
 			push(expr_headers, s.segname);
 		}
 
+		if (version == 1) to_v1(h);
 		to_little(h);
 		offset += write(fd, &h, sizeof(h));
 		offset += write(fd, data.data(), data.size());
