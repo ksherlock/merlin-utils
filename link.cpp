@@ -798,7 +798,7 @@ void finish(void) {
 		if (lkv == 0)
 			save_bin(path, segments.back());
 		else
-			save_omf(path, segments, compress, express);
+			save_omf(path, segments, compress, express, ver);
 
 		set_file_type(path, ftype, atype);
 	} catch (std::exception &ex) {
@@ -903,7 +903,11 @@ void finish3(void) {
 
 				push(buffer, omf::opcode::GEQU);
 				push(buffer, sym.name);
-				push(buffer, static_cast<uint16_t>(0x00)); /* length attr */
+				if (ver == 1) {
+					push(buffer, static_cast<uint8_t>(0x00)); /* length attr */
+				} else {
+					push(buffer, static_cast<uint16_t>(0x00)); /* length attr */
+				}
 				push(buffer, static_cast<uint8_t>('G')); /* type attr */
 				push(buffer, static_cast<uint32_t>(sym.value));
 			} else {
@@ -969,7 +973,11 @@ void finish3(void) {
 				/* add global record */
 				push(buffer, omf::opcode::GLOBAL);
 				push(buffer, iter1->second); /* name */
-				push(buffer, static_cast<uint16_t>(0x00)); /* length attr */
+				if (ver == 1) {
+					push(buffer, static_cast<uint8_t>(0x00)); /* length attr */
+				} else {
+					push(buffer, static_cast<uint16_t>(0x00)); /* length attr */
+				}
 				push(buffer, static_cast<uint8_t>('N')); /* type attr */
 				push(buffer, static_cast<uint8_t>(0x00)); /* public */
 				++iter1;
@@ -1006,7 +1014,7 @@ void finish3(void) {
 	if (iter3 != resolved.end())
 		throw std::runtime_error("relocation offset error");
 
-	void save_object(const std::string &path, omf::segment &s, uint32_t length);
+	void save_object(const std::string &path, omf::segment &s, uint32_t length, unsigned version);
 
 
 	std::string path = save_file;
@@ -1014,7 +1022,7 @@ void finish3(void) {
 	if (verbose) printf("Saving %s\n", path.c_str());
 
 	try {
-		save_object(path, seg, pc);
+		save_object(path, seg, pc, ver);
 		set_file_type(path, 0xb1, 0x0000);
 	} catch (std::exception &ex) {
 		errx(EX_OSERR, "%s: %s", path.c_str(), ex.what());

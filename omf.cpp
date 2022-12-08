@@ -490,7 +490,7 @@ void save_bin(const std::string &path, omf::segment &segment) {
 	close(fd);
 }
 
-void save_object(const std::string &path, omf::segment &s, uint32_t length) {
+void save_object(const std::string &path, omf::segment &s, uint32_t length, unsigned version) {
 
 	/* data is already in OMF format. */
 
@@ -521,6 +521,7 @@ void save_object(const std::string &path, omf::segment &s, uint32_t length) {
 	h.bytecount = sizeof(omf_header) + data.size() + s.data.size();
 
 	unsigned offset = 0;
+	if (version == 1) to_v1(h);
 	to_little(h);
 	offset += write(fd, &h, sizeof(h));
 	offset += write(fd, data.data(), data.size());
@@ -669,6 +670,12 @@ void save_omf(const std::string &path, std::vector<omf::segment> &segments, bool
 		to_little(h);
 		offset += write(fd, &h, sizeof(h));
 		offset += write(fd, data.data(), data.size());
+
+		// version 1 needs 512-byte padding for all but final segment.
+		if (version == 1 && &s != &segments.back()) {
+			static uint8_t zero[512];
+			offset += write(fd, zero, 512 - (offset & 511) );
+		}
 	}
 
 	if (expressload) {
